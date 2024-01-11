@@ -5,7 +5,7 @@
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
 Version: 4.6.0
-Release: 2%{?dist}
+Release: 5%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
 Source1: sos-audit-%{auditversion}.tgz
@@ -23,6 +23,8 @@ Recommends: python3-pyyaml
 Conflicts: vdsm < 4.40
 Obsoletes: sos-collector <= 1.9
 Patch1: sos-SUPDEV145-ovnkube-logs.patch
+Patch2: sos-SUPDEV148-microshift-greenboot.patch
+Patch3: sos-RHEL-13701-aap-passwords.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -34,6 +36,8 @@ support technicians and developers.
 %setup -qn %{name}-%{version}
 %setup -T -D -a1 -q
 %patch1 -p1
+%patch2 -p1
+%patch3 -p1
 
 %build
 %py3_build
@@ -106,6 +110,18 @@ of the system.  Currently storage and filesystem commands are audited.
 
 
 %changelog
+* Wed Oct 18 2023 Pavel Moravec <pmoravec@redhat.com> = 4.6.0-5
+  [pulpcore] Scrub AUTH_LDAP_BIND_PASSWORD value
+  Resolves: RHEL-13701
+
+* Tue Oct 17 2023 Pavel Moravec <pmoravec@redhat.com> = 4.6.0-4
+- [pulp] Fix dynaconf obfuscation and add AUTH_LDAP_BIND_PASSWORD
+  Resolves: RHEL-13701
+
+* Thu Oct 12 2023 Pavel Moravec <pmoravec@redhat.com> = 4.6.0-3
+- [greenboot] seperate logs to a standalone plugin; enhance [microshift]
+  Resolves: SUPDEV148
+
 * Fri Sep 01 2023 Pavel Moravec <pmoravec@redhat.com> = 4.6.0-2
 - [openshift_ovn] Collect additional ovnkube node logs
   Resolves: SUPDEV145

@@ -1,0 +1,108 @@
+From 6526985ea2464944c5cf4cd87c2d981a77363077 Mon Sep 17 00:00:00 2001
+From: Pablo Acevedo Montserrat <pacevedo@redhat.com>
+Date: Tue, 12 Sep 2023 10:24:38 +0200
+Subject: [PATCH] [microshift] Add microshift-etcd.scope service
+
+Signed-off-by: Pablo Acevedo Montserrat <pacevedo@redhat.com>
+---
+ sos/report/plugins/microshift.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sos/report/plugins/microshift.py b/sos/report/plugins/microshift.py
+index 1b932d648..2cfafef04 100644
+--- a/sos/report/plugins/microshift.py
++++ b/sos/report/plugins/microshift.py
+@@ -28,7 +28,7 @@ class Microshift(Plugin, RedHatPlugin):
+     plugin_timeout = 900
+     packages = ('microshift', 'microshift-selinux', 'microshift-networking',
+                 'microshift-greenboot')
+-    services = (plugin_name, 'greenboot-healthcheck',
++    services = (plugin_name, 'microshift-etcd.scope', 'greenboot-healthcheck',
+                 'greenboot-task-runner', 'redboot-task-runner')
+     profiles = (plugin_name,)
+     localhost_kubeconfig = '/var/lib/microshift/resources/kubeadmin/kubeconfig'
+From 765ac8f3cc8e8413278afbf2579eaac7c0419f72 Mon Sep 17 00:00:00 2001
+From: Evgeny Slutsky <eslutsky@redhat.com>
+Date: Thu, 7 Sep 2023 10:54:12 +0300
+Subject: [PATCH] [greenboot] seperate logs to a standalone plugin.
+
+Signed-off-by: Evgeny Slutsky <eslutsky@redhat.com>
+---
+ sos/report/plugins/greenboot.py  | 26 ++++++++++++++++++++++++++
+ sos/report/plugins/microshift.py |  6 ++----
+ 2 files changed, 28 insertions(+), 4 deletions(-)
+ create mode 100644 sos/report/plugins/greenboot.py
+
+diff --git a/sos/report/plugins/greenboot.py b/sos/report/plugins/greenboot.py
+new file mode 100644
+index 000000000..69b6607b0
+--- /dev/null
++++ b/sos/report/plugins/greenboot.py
+@@ -0,0 +1,26 @@
++# Copyright 2023 Red Hat, Inc. Evgeny Slutsky <eslutsky@redhat.com>
++# This file is part of the sos project: https://github.com/sosreport/sos
++#
++# This copyrighted material is made available to anyone wishing to use,
++# modify, copy, or redistribute it subject to the terms and conditions of
++# version 2 of the GNU General Public License.
++#
++# See the LICENSE file in the source distribution for further information.
++
++from sos.report.plugins import Plugin, RedHatPlugin
++
++
++class Greenboot(Plugin, RedHatPlugin):
++    """The greenboot plugin collects systemd service logs and configuration.
++    """
++
++    short_desc = 'Greenboot'
++    plugin_name = 'greenboot'
++    services = (plugin_name, 'greenboot-healthcheck',
++                'greenboot-task-runner', 'redboot-task-runner',)
++    profiles = ('system',)
++
++    def setup(self):
++        self.add_copy_spec([
++            "/etc/greenboot/greenboot.conf",
++        ])
+diff --git a/sos/report/plugins/microshift.py b/sos/report/plugins/microshift.py
+index 2cfafef04..669f4c021 100644
+--- a/sos/report/plugins/microshift.py
++++ b/sos/report/plugins/microshift.py
+@@ -26,10 +26,8 @@ class Microshift(Plugin, RedHatPlugin):
+     short_desc = 'Microshift'
+     plugin_name = 'microshift'
+     plugin_timeout = 900
+-    packages = ('microshift', 'microshift-selinux', 'microshift-networking',
+-                'microshift-greenboot')
+-    services = (plugin_name, 'microshift-etcd.scope', 'greenboot-healthcheck',
+-                'greenboot-task-runner', 'redboot-task-runner')
++    packages = ('microshift', 'microshift-selinux', 'microshift-networking',)
++    services = (plugin_name, 'microshift-etcd.scope',)
+     profiles = (plugin_name,)
+     localhost_kubeconfig = '/var/lib/microshift/resources/kubeadmin/kubeconfig'
+ 
+From 0b72a1f07a5f46e22cb926d129bd8eb63ba20a9a Mon Sep 17 00:00:00 2001
+From: Pablo Acevedo Montserrat <pacevedo@redhat.com>
+Date: Tue, 19 Sep 2023 12:18:42 +0200
+Subject: [PATCH] [microshift] Add /etc/microshift file copy spec
+
+Signed-off-by: Pablo Acevedo Montserrat <pacevedo@redhat.com>
+---
+ sos/report/plugins/microshift.py | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/sos/report/plugins/microshift.py b/sos/report/plugins/microshift.py
+index 669f4c021..8fe39ab29 100644
+--- a/sos/report/plugins/microshift.py
++++ b/sos/report/plugins/microshift.py
+@@ -146,6 +146,9 @@ def setup(self):
+         Output format for this function is based on `oc adm inspect` command,
+         which is used to retrieve all API resources from the cluster.
+         """
++
++        self.add_copy_spec('/etc/microshift')
++
+         if self.path_exists('/var/lib/microshift-backups'):
+             self.add_copy_spec(['/var/lib/microshift-backups/*/version',
+                                 '/var/lib/microshift-backups/*.json'])
