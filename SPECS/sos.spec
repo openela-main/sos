@@ -4,8 +4,8 @@
 
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
-Version: 4.6.0
-Release: 5%{?dist}
+Version: 4.6.1
+Release: 1%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
 Source1: sos-audit-%{auditversion}.tgz
@@ -22,9 +22,7 @@ Recommends: python3-pexpect
 Recommends: python3-pyyaml
 Conflicts: vdsm < 4.40
 Obsoletes: sos-collector <= 1.9
-Patch1: sos-SUPDEV145-ovnkube-logs.patch
-Patch2: sos-SUPDEV148-microshift-greenboot.patch
-Patch3: sos-RHEL-13701-aap-passwords.patch
+Patch1: sos-RHEL-21178-device-auth.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -36,11 +34,9 @@ support technicians and developers.
 %setup -qn %{name}-%{version}
 %setup -T -D -a1 -q
 %patch1 -p1
-%patch2 -p1
-%patch3 -p1
 
 %build
-%py3_build
+%py3_build         
 
 %install
 %py3_install '--install-scripts=%{_sbindir}'
@@ -110,6 +106,12 @@ of the system.  Currently storage and filesystem commands are audited.
 
 
 %changelog
+* Thu Jan 11 2024 Pavel Moravec <pmoravec@redhat.com> = 4.6.1-1
+- rebase to upstream 4.6.1
+  Resolves: RHEL-21174
+- [redhat] Change authentication method for RHEL
+  Resolves: RHEL-21178
+
 * Wed Oct 18 2023 Pavel Moravec <pmoravec@redhat.com> = 4.6.0-5
   [pulpcore] Scrub AUTH_LDAP_BIND_PASSWORD value
   Resolves: RHEL-13701
