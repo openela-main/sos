@@ -4,7 +4,7 @@
 
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
-Version: 4.6.1
+Version: 4.7.0
 Release: 1%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
@@ -22,7 +22,6 @@ Recommends: python3-pexpect
 Recommends: python3-pyyaml
 Conflicts: vdsm < 4.40
 Obsoletes: sos-collector <= 1.9
-Patch1: sos-RHEL-21178-device-auth.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -33,7 +32,6 @@ support technicians and developers.
 %prep
 %setup -qn %{name}-%{version}
 %setup -T -D -a1 -q
-%patch1 -p1
 
 %build
 %py3_build         
@@ -106,6 +104,10 @@ of the system.  Currently storage and filesystem commands are audited.
 
 
 %changelog
+* Tue Feb 20 2024 Jan Jansky <jjansky@redhat.com> = 4.7.0-1
+- rebase to upstream 4.7.0
+  Resolves: RHEL-26115
+
 * Thu Jan 11 2024 Pavel Moravec <pmoravec@redhat.com> = 4.6.1-1
 - rebase to upstream 4.6.1
   Resolves: RHEL-21174
