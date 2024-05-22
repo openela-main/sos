@@ -4,8 +4,8 @@
 
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
-Version: 4.7.0
-Release: 1%{?dist}
+Version: 4.7.1
+Release: 2%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
 Source1: sos-audit-%{auditversion}.tgz
@@ -22,6 +22,7 @@ Recommends: python3-pexpect
 Recommends: python3-pyyaml
 Conflicts: vdsm < 4.40
 Obsoletes: sos-collector
+Patch1: sos-RHEL-35945-sos-clean-on-archive.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -32,6 +33,7 @@ support technicians and developers.
 %prep
 %setup -qn %{name}-%{version}
 %setup -T -D -a1 -q
+%patch1 -p1
 
 
 %build
@@ -105,6 +107,14 @@ of the system. Currently storage and filesystem commands are audited.
 %ghost /etc/audit/rules.d/40-sos-storage.rules
 
 %changelog
+* Thu May 09 2024 Pavel Moravec <pmoravec@redhat.com> = 4.7.1-2
+- [archive] Fix get_archive_root after files reordering
+  Resolves: RHEL-35945
+
+* Mon Apr 08 2024 Jan Jansky <jjansky@redhat.com> = 4.7.1-1
+- rebase to upstream 4.7.1
+  Resolves: RHEL-32104
+
 * Tue Feb 20 2024 Jan Jansky <jjansky@redhat.com> = 4.7.0-1
 - rebase to upstream 4.7.0
   Resolves: RHEL-26111
