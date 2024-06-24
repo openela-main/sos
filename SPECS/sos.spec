@@ -5,7 +5,7 @@
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
 Version: 4.7.1
-Release: 2%{?dist}
+Release: 3%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
 Source1: sos-audit-%{auditversion}.tgz
@@ -107,7 +107,7 @@ of the system. Currently storage and filesystem commands are audited.
 %ghost /etc/audit/rules.d/40-sos-storage.rules
 
 %changelog
-* Thu May 09 2024 Pavel Moravec <pmoravec@redhat.com> = 4.7.1-2
+* Thu May 09 2024 Pavel Moravec <pmoravec@redhat.com> = 4.7.1-3
 - [archive] Fix get_archive_root after files reordering
   Resolves: RHEL-35945
 
