@@ -4,7 +4,7 @@
 
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
-Version: 4.7.1
+Version: 4.7.2
 Release: 3%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
@@ -22,7 +22,7 @@ Recommends: python3-pexpect
 Recommends: python3-pyyaml
 Conflicts: vdsm < 4.40
 Obsoletes: sos-collector <= 1.9
-Patch1: sos-RHEL-35945-sos-clean-on-archive.patch
+Patch0: sos-RHEL-22732-reverted.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -33,10 +33,10 @@ support technicians and developers.
 %prep
 %setup -qn %{name}-%{version}
 %setup -T -D -a1 -q
-%patch1 -p1
+%patch0 -p1 -R
 
 %build
-%py3_build         
+%py3_build
 
 %install
 %py3_install '--install-scripts=%{_sbindir}'
@@ -106,6 +106,14 @@ of the system.  Currently storage and filesystem commands are audited.
 
 
 %changelog
+* Wed Aug 21 2024 Pavel Moravec <pmoravec@redhat.com> = 4.7.2-3
+- reverting RHEL-22732 patch due to regressions
+  Resolves: RHEL-49781
+
+* Fri Jun 21 2024 Pierguido Lambri <plambri@redhat.com> = 4.7.2-1
+- New upstream release
+  Resolves: RHEL-49781
+
 * Thu May 09 2024 Pavel Moravec <pmoravec@redhat.com> = 4.7.1-3
 - [archive] Fix get_archive_root after files reordering
   Resolves: RHEL-35945
@@ -410,8 +418,7 @@ of the system.  Currently storage and filesystem commands are audited.
 * Thu Apr 01 2021 Pavel Moravec <pmoravec@redhat.com> - 4.1-3
 - adding sos-audit
 - [gluster] Add glusterd public keys and status files
-  Resolves: bz1925419 
+  Resolves: bz1925419
 
 * Wed Mar 10 2021 Sandro Bonazzola <sbonazzo@redhat.com> - 4.1-1
 - Rebase to 4.1
-
