@@ -4,8 +4,8 @@
 
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
-Version: 4.7.2
-Release: 2%{?dist}
+Version: 4.8.1
+Release: 1%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
 Source1: sos-audit-%{auditversion}.tgz
@@ -22,7 +22,6 @@ Recommends: python3-pexpect
 Recommends: python3-pyyaml
 Conflicts: vdsm < 4.40
 Obsoletes: sos-collector
-Patch0: sos-RHEL-22732-reverted.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -33,8 +32,6 @@ support technicians and developers.
 %prep
 %setup -qn %{name}-%{version}
 %setup -T -D -a1 -q
-%patch0 -p1 -R
-
 
 %build
 %py3_build
@@ -107,6 +104,22 @@ of the system. Currently storage and filesystem commands are audited.
 %ghost /etc/audit/rules.d/40-sos-storage.rules
 
 %changelog
+* Wed Oct 23 2024 Jan Jansky <jjansky@redhat.com> = 4.8.1-1
+- Update to 4.8.1 in RHEL 8
+  Resolves: RHEL-64160
+
+* Fri Sep 27 2024 Jan Jansky <jjansky@redhat.com> = 4.8.0-3
+- Added credentials obfuscation from multiple files
+  Resolves: RHEL-58097
+
+* Sat Sep 14 2024 Pierguido Lambri <plambri@redhat.com> = 4.8.0-2
+- Resolves: RHEL-22732
+  Fix wrong formatting
+
+* Mon Sep 09 2024 Pierguido Lambri <plambri@redhat.com> = 4.8.0-1
+- New upstream release
+  Resolves: RHEL-58097
+
 * Wed Aug 21 2024 Pavel Moravec <pmoravec@redhat.com> = 4.7.2-2
 - reverting RHEL-22732 patch due to regressions
   Resolves: RHEL-49779
