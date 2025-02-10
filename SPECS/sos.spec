@@ -4,7 +4,7 @@
 
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
-Version: 4.8.1
+Version: 4.8.2
 Release: 1%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
@@ -104,6 +104,10 @@ of the system.  Currently storage and filesystem commands are audited.
 
 
 %changelog
+* Tue Jan 07 2025 Jan Jansky <jjansky@redhat.com> = 4.8.2-1
+- Update to 4.8.2 in RHEL 9
+  Resolves: RHEL-72942
+
 * Wed Oct 23 2024 Jan Jansky <jjansky@redhat.com> = 4.8.1-1
 - Update to 4.8.1 in RHEL 9
   Resolves: RHEL-64159
