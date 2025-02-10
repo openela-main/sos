@@ -4,7 +4,7 @@
 
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
-Version: 4.8.1
+Version: 4.8.2
 Release: 1%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
@@ -22,6 +22,7 @@ Recommends: python3-pexpect
 Recommends: python3-pyyaml
 Conflicts: vdsm < 4.40
 Obsoletes: sos-collector
+Patch1: sos-python36-walrus-operator.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -32,6 +33,7 @@ support technicians and developers.
 %prep
 %setup -qn %{name}-%{version}
 %setup -T -D -a1 -q
+%patch -P 1 -p1 
 
 %build
 %py3_build
@@ -104,6 +106,10 @@ of the system. Currently storage and filesystem commands are audited.
 %ghost /etc/audit/rules.d/40-sos-storage.rules
 
 %changelog
+* Tue Jan 07 2025 Jan Jansky <jjansky@redhat.com> = 4.8.2-1
+- Update to 4.8.2 in RHEL 8
+  Resolves: RHEL-72941
+
 * Wed Oct 23 2024 Jan Jansky <jjansky@redhat.com> = 4.8.1-1
 - Update to 4.8.1 in RHEL 8
   Resolves: RHEL-64160

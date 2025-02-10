@@ -1,0 +1,25 @@
+--- a/sos/report/plugins/coredump.py
++++ b/sos/report/plugins/coredump.py
+@@ -72,8 +72,8 @@
+             cdump = line.split()
+             pid = cdump[4]
+             exe = cdump[-2]
+-            if regex := self.get_option("executable"):
+-                if not re.search(regex, exe, re.I):
++            if self.get_option("executable"):
++                if not re.search(self.get_option("executable"), exe, re.I):
+                     continue
+             cinfo = self.collect_cmd_output(f"coredumpctl info {pid}")
+             if cinfo['status'] != 0:
+--- a/sos/collector/sosnode.py
++++ b/sos/collector/sosnode.py
+@@ -372,7 +372,8 @@
+             for line in result.splitlines():
+                 if not is_list:
+                     try:
+-                        if ls := line.split():
++                        ls = line.split()
++                        if ls:
+                             res.append(ls[0])
+                     except Exception as err:
+                         self.log_debug(f"Error parsing sos help: {err}")
