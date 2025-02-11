@@ -5,7 +5,7 @@
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
 Version: 4.8.2
-Release: 1%{?dist}
+Release: 2%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
 Source1: sos-audit-%{auditversion}.tgz
@@ -22,6 +22,7 @@ Recommends: python3-pexpect
 Recommends: python3-pyyaml
 Conflicts: vdsm < 4.40
 Obsoletes: sos-collector <= 1.9
+Patch1: sos-RHEL-76057-new-plugin-aap_containerized.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -32,6 +33,7 @@ support technicians and developers.
 %prep
 %setup -qn %{name}-%{version}
 %setup -T -D -a1 -q
+%patch -P 1 -p1
 
 %build
 %py3_build
@@ -104,6 +106,10 @@ of the system.  Currently storage and filesystem commands are audited.
 
 
 %changelog
+* Fri Jan 24 2025 Jan Jansky <jjansky@redhat.com> = 4.8.2-2
+- Add new plugin aap_containerized
+  Resolves: RHEL-76057
+
 * Tue Jan 07 2025 Jan Jansky <jjansky@redhat.com> = 4.8.2-1
 - Update to 4.8.2 in RHEL 9
   Resolves: RHEL-72942
@@ -194,7 +200,7 @@ of the system.  Currently storage and filesystem commands are audited.
 - Rebase on upstream 4.5.5
   Resolves: bz2217943
 
-* Tue May 31 2023 Pavel Moravec <pmoravec@redhat.com> = 4.5.4-1
+* Wed May 31 2023 Pavel Moravec <pmoravec@redhat.com> = 4.5.4-1
 - [specfile] add runtime requirement to python3-setuptools
   Resolves: bz2207776
 
