@@ -1,11 +1,11 @@
 %{!?python_sitelib: %define python_sitelib %(%{__python} -c "from distutils.sysconfig import get_python_lib; print get_python_lib()")}
 
-%global auditversion 0.3
+%global auditversion 0.3-1
 
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
-Version: 4.8.2
-Release: 1%{?dist}
+Version: 4.9.1
+Release: 2%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
 Source1: sos-audit-%{auditversion}.tgz
@@ -23,6 +23,10 @@ Recommends: python3-pyyaml
 Conflicts: vdsm < 4.40
 Obsoletes: sos-collector
 Patch1: sos-python36-walrus-operator.patch
+Patch2: sosreport-binary.patch
+Patch3: sos-cleaner-Use-hostname-f-in-HostnamePrepper.patch
+Patch4: sos-dnf-Scrub-passwords-in-repository-URIs.patch
+Patch5: sos-policy-Re-add-logic-to-request-case-id-if-not-presen.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -34,6 +38,10 @@ support technicians and developers.
 %setup -qn %{name}-%{version}
 %setup -T -D -a1 -q
 %patch -P 1 -p1 
+%patch -P 2 -p1
+%patch -P 3 -p1
+%patch -P 4 -p1
+%patch -P 5 -p1
 
 %build
 %py3_build
@@ -57,18 +65,17 @@ mkdir -p %{buildroot}%{_sysconfdir}/sos/{cleaner,presets.d,extras.d,groups.d}
 # internationalization is currently broken. Uncomment this line once fixed.
 # %%files -f %%{name}.lang
 %files
-%{_sbindir}/sosreport
 %{_sbindir}/sos
+%{_sbindir}/sosreport
 %{_sbindir}/sos-collector
 %dir /etc/sos/presets.d
 %dir /etc/sos/extras.d
 %dir /etc/sos/groups.d
 /etc/tmpfiles.d/%{name}.conf
 %{python3_sitelib}/*
-%{_mandir}/man1/sosreport.1.gz
 %{_mandir}/man1/sos-clean.1.gz
+%{_mandir}/man1/sos-upload.1.gz
 %{_mandir}/man1/sos-collect.1.gz
-%{_mandir}/man1/sos-collector.1.gz
 %{_mandir}/man1/sos-help.1.gz
 %{_mandir}/man1/sos-mask.1.gz
 %{_mandir}/man1/sos-report.1.gz
@@ -81,7 +88,7 @@ mkdir -p %{buildroot}%{_sysconfdir}/sos/{cleaner,presets.d,extras.d,groups.d}
 
 %package audit
 Summary: Audit use of some commands for support purposes
-License: GPLv2+
+License: GPL-2.0-or-later
 Group: Application/System
 
 %description audit
@@ -104,8 +111,17 @@ of the system. Currently storage and filesystem commands are audited.
 %{_mandir}/man8/sos-audit.sh.8.gz
 %ghost /etc/audit/rules.d/40-sos-filesystem.rules
 %ghost /etc/audit/rules.d/40-sos-storage.rules
+%license LICENSE
 
 %changelog
+* Fri May 30 2025 Jan Jansky <jjansky@redhat.com> = 4.9.1-2
+- Update to 4.9.1-2 in RHEL 8
+  Resolves: RHEL-86645
+
+* Tue Apr 15 2025 Jan Jansky <jjansky@redhat.com> = 4.9.1-1
+- Update to 4.9.1 in RHEL 8
+  Resolves: RHEL-86645
+
 * Tue Jan 07 2025 Jan Jansky <jjansky@redhat.com> = 4.8.2-1
 - Update to 4.8.2 in RHEL 8
   Resolves: RHEL-72941
