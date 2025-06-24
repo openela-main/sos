@@ -1,0 +1,111 @@
+From 369e65acafa70a6d7a9751802395bddaaeafd141 Mon Sep 17 00:00:00 2001
+From: Jose Castillo <jcastillo@redhat.com>
+Date: Wed, 21 May 2025 10:10:41 +0100
+Subject: [PATCH] [policy] Re-add logic to request case-id if not present
+
+This commit re-adds the logic to ask for case-id if
+the user hasn't specified it in the command line
+explicitly.
+
+Related: RHEL-92071
+
+Signed-off-by: Jose Castillo <jcastillo@redhat.com>
+---
+ sos/policies/distros/__init__.py | 18 ++++++++++++++++--
+ sos/upload/__init__.py           |  3 +++
+ sos/upload/targets/redhat.py     | 22 ++--------------------
+ 3 files changed, 21 insertions(+), 22 deletions(-)
+
+diff --git a/sos/policies/distros/__init__.py b/sos/policies/distros/__init__.py
+index 06327a6b..7004fdbd 100644
+--- a/sos/policies/distros/__init__.py
++++ b/sos/policies/distros/__init__.py
+@@ -13,6 +13,7 @@
+ import os
+ import re
+ 
++from sos import _sos as _
+ from sos.policies import Policy
+ from sos.policies.init_systems import InitSystem
+ from sos.policies.init_systems.systemd import SystemdInit
+@@ -300,8 +301,21 @@ class LinuxPolicy(Policy):
+         if cmdline_opts.low_priority:
+             self._configure_low_priority()
+ 
+-        if cmdline_opts.case_id:
+-            self.case_id = cmdline_opts.case_id
++        # set or query for case id
++        self.case_id = self.prompt_for_case_id(cmdline_opts)
++
++    def prompt_for_case_id(self, cmdline_opts):
++        if not cmdline_opts.batch and not \
++                cmdline_opts.quiet:
++            if not cmdline_opts.case_id:
++                cmdline_opts.case_id = input(
++                    _("Optionally, please enter the case id that you are "
++                      "generating this report for: ")
++                )
++        self.case_id = cmdline_opts.case_id if \
++            cmdline_opts.case_id else ""
++
++        return self.case_id
+ 
+     def _configure_low_priority(self):
+         """Used to constrain sos to a 'low priority' execution, potentially
+diff --git a/sos/upload/__init__.py b/sos/upload/__init__.py
+index 97872f69..7be33f65 100644
+--- a/sos/upload/__init__.py
++++ b/sos/upload/__init__.py
+@@ -282,6 +282,9 @@ this utility.
+         if self.from_cmdline:
+             self.intro()
+             self.archive = self.opts.upload_file
++            self.caseid = self.policy.prompt_for_case_id(
++                cmdline_opts=self.opts
++            )
+         cmdline_target = self.opts.upload_target
+         if cmdline_target and cmdline_target != 'local':
+             self.upload_target = self.upload_targets[cmdline_target]
+diff --git a/sos/upload/targets/redhat.py b/sos/upload/targets/redhat.py
+index b3e8e3c5..d5262af0 100644
+--- a/sos/upload/targets/redhat.py
++++ b/sos/upload/targets/redhat.py
+@@ -52,25 +52,6 @@ class RHELUploadTarget(UploadTarget):
+ 
+         self.upload_directory = self.commons['cmdlineopts'].upload_directory
+ 
+-    def prompt_for_case_id(self):
+-        caseid = self.commons['cmdlineopts'].case_id if \
+-            self.commons['cmdlineopts'].case_id else ""
+-
+-        # set or query for case id
+-        if not self.commons['cmdlineopts'].batch and not \
+-                self.commons['cmdlineopts'].quiet:
+-            if caseid:
+-                self.commons['cmdlineopts'].case_id = caseid
+-            else:
+-                self.commons['cmdlineopts'].case_id = input(
+-                    _("Optionally, please enter the case id that you are "
+-                      "generating this report for: ")
+-                )
+-        if self.commons['cmdlineopts'].case_id:
+-            self.case_id = self.commons['cmdlineopts'].case_id
+-
+-        return self.case_id
+-
+     def prompt_for_upload_user(self):
+         if self.commons['cmdlineopts'].upload_user:
+             self.ui_log.info(
+@@ -101,7 +82,8 @@ class RHELUploadTarget(UploadTarget):
+             if self.commons['cmdlineopts'].upload_protocol == 'sftp':
+                 return self.RH_SFTP_HOST
+             if not self.commons['cmdlineopts'].case_id and not\
+-               self.prompt_for_case_id():
++                self.commons['policy'].prompt_for_case_id(
++                    self.commons['cmdlineopts']):
+                 return self.RH_SFTP_HOST
+ 
+         except Exception as e:
+-- 
+2.49.0
+

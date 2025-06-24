@@ -1,10 +1,10 @@
 %{!?python_sitelib: %define python_sitelib %(%{__python} -c "from distutils.sysconfig import get_python_lib; print get_python_lib()")}
 
-%global auditversion 0.3
+%global auditversion 0.3-1
 
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
-Version: 4.8.2
+Version: 4.9.1
 Release: 2%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
@@ -22,7 +22,10 @@ Recommends: python3-pexpect
 Recommends: python3-pyyaml
 Conflicts: vdsm < 4.40
 Obsoletes: sos-collector <= 1.9
-Patch1: sos-RHEL-76057-new-plugin-aap_containerized.patch
+Patch1: sosreport-binary.patch
+Patch2: sos-cleaner-Use-hostname-f-in-HostnamePrepper.patch
+Patch3: sos-dnf-Scrub-passwords-in-repository-URIs.patch
+Patch4: sos-policy-Re-add-logic-to-request-case-id-if-not-presen.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -33,7 +36,10 @@ support technicians and developers.
 %prep
 %setup -qn %{name}-%{version}
 %setup -T -D -a1 -q
-%patch -P 1 -p1
+%patch -P 1 -p1 
+%patch -P 2 -p1
+%patch -P 3 -p1
+%patch -P 4 -p1
 
 %build
 %py3_build
@@ -80,7 +86,7 @@ cd ..
 
 %package audit
 Summary: Audit use of some commands for support purposes
-License: GPLv2+
+License: GPL-2.0-or-later
 Group: Application/System
 
 %description audit
@@ -103,9 +109,24 @@ of the system.  Currently storage and filesystem commands are audited.
 %{_mandir}/man8/sos-audit.sh.8.gz
 %ghost /etc/audit/rules.d/40-sos-filesystem.rules
 %ghost /etc/audit/rules.d/40-sos-storage.rules
+%license LICENSE
 
 
 %changelog
+* Fri May 30 2025 Jan Jansky <jjansky@redhat.com> = 4.9.1-2
+- Update to 4.9.1-2 in RHEL 9
+  Resolves: RHEL-86668
+  Resolves: RHEL-86644
+  Resolves: RHEL-86647
+  Resolves: RHEL-86646
+
+* Tue Apr 15 2025 Jan Jansky <jjansky@redhat.com> = 4.9.1-1
+- Update to 4.9.1 in RHEL 9
+  Resolves: RHEL-86668
+  Resolves: RHEL-86644
+  Resolves: RHEL-86647
+  Resolves: RHEL-86646
+
 * Fri Jan 24 2025 Jan Jansky <jjansky@redhat.com> = 4.8.2-2
 - Add new plugin aap_containerized
   Resolves: RHEL-76057
