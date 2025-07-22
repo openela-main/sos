@@ -4,8 +4,8 @@
 
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
-Version: 4.9.1
-Release: 2%{?dist}
+Version: 4.9.2
+Release: 1%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
 Source1: sos-audit-%{auditversion}.tgz
@@ -24,9 +24,6 @@ Conflicts: vdsm < 4.40
 Obsoletes: sos-collector
 Patch1: sos-python36-walrus-operator.patch
 Patch2: sosreport-binary.patch
-Patch3: sos-cleaner-Use-hostname-f-in-HostnamePrepper.patch
-Patch4: sos-dnf-Scrub-passwords-in-repository-URIs.patch
-Patch5: sos-policy-Re-add-logic-to-request-case-id-if-not-presen.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -39,9 +36,6 @@ support technicians and developers.
 %setup -T -D -a1 -q
 %patch -P 1 -p1 
 %patch -P 2 -p1
-%patch -P 3 -p1
-%patch -P 4 -p1
-%patch -P 5 -p1
 
 %build
 %py3_build
@@ -114,6 +108,10 @@ of the system. Currently storage and filesystem commands are audited.
 %license LICENSE
 
 %changelog
+* Fri Jul 04 2025 Jan Jansky <jjansky@redhat.com> = 4.9.2-1
+- Update to 4.9.2 in RHEL 8
+  Resolves: RHEL-101716
+
 * Fri May 30 2025 Jan Jansky <jjansky@redhat.com> = 4.9.1-2
 - Update to 4.9.1-2 in RHEL 8
   Resolves: RHEL-86645
