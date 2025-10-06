@@ -1,0 +1,49 @@
+--- a/sos/upload/targets/__init__.py	2025-09-16 19:57:27.294642506 +0200
++++ b/sos/upload/targets/__init__.py	2025-09-16 19:59:44.498573843 +0200
+@@ -465,7 +465,7 @@
+                 self.upload_password or
+                 self._upload_password)
+ 
+-    def upload_sftp(self, user=None, password=None, user_dir=None):
++    def upload_sftp(self, user=None, password=None):
+         """Attempts to upload the archive to an SFTP location.
+ 
+         Due to the lack of well maintained, secure, and generally widespread
+@@ -540,13 +540,10 @@
+             raise Exception("Unable to connect via SFTP to "
+                             f"{self.get_upload_url_string()}")
+ 
+-        # certain implementations require file to be put in the user dir
+-        put_cmd = (
+-            f"put {self.upload_archive_name} "
+-            f"{f'{user_dir}/' if user_dir else ''}"
+-            f"{self._get_sftp_upload_name()}"
+-        )
++        put_cmd = (f'put {self.upload_archive_name} '
++                   f'{self._get_sftp_upload_name()}')
+         ret.sendline(put_cmd)
++
+         put_expects = [
+             '100%',
+             pexpect.TIMEOUT,
+--- a/sos/upload/targets/redhat.py	2025-09-16 19:57:36.804628207 +0200
++++ b/sos/upload/targets/redhat.py	2025-09-16 20:00:52.578728154 +0200
+@@ -145,7 +145,7 @@
+         return fname
+ 
+     # pylint: disable=too-many-branches
+-    def upload_sftp(self, user=None, password=None, user_dir=None):
++    def upload_sftp(self, user=None, password=None):    
+         """Override the base upload_sftp to allow for setting an on-demand
+         generated anonymous login for the RH SFTP server if a username and
+         password are not given
+@@ -217,8 +217,7 @@
+                     f"{anon.status_code}): {anon.json()}"
+                 )
+         if _user and _token:
+-            return super().upload_sftp(user=_user, password=_token,
+-                                       user_dir=_user)
++            return super().upload_sftp(user=_user, password=_token)
+         raise Exception("Could not retrieve valid or anonymous credentials")
+ 
+     def check_file_too_big(self, archive):

@@ -39,3 +39,16 @@
              self.db_folder = "/var/snap/juju-db/current/db"
  
          super().setup()
+--- a/sos/report/plugins/__init__.py	2025-08-21 12:41:10.418390705 +0200
++++ b/sos/report/plugins/__init__.py	2025-08-21 12:55:39.546634618 +0200
+@@ -2965,8 +2965,9 @@
+         :rtype: ``str``
+         """
+         if self.container_exists(container, runtime) or \
+-           ((_runtime := self._get_container_runtime(runtime)) and
++           ((self._get_container_runtime(runtime)) and
+            runas is not None):
++            _runtime = self._get_container_runtime(runtime)
+             return _runtime.fmt_container_cmd(container, cmd, quotecmd)
+         return ''
+

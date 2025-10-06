@@ -1,18 +1,20 @@
 --- /dev/null			2025-04-03 01:35:45.132999852 +0200
-+++ sos-4.9.2/bin/sosreport	2025-04-15 13:54:04.924751581 +0200
-@@ -0,0 +1,5 @@
++++ sos-4.10.0/bin/sosreport	2025-04-15 13:54:04.924751581 +0200
+@@ -0,0 +1,6 @@
 +#!/usr/bin/python3
 +msg = ("sosreport binary is deprecated, use 'sos report' instead")
 +print(msg)
++exit(1)
 +
 +# vim:ts=4 et sw=4
 
 --- /dev/null			2025-04-03 01:35:45.132999852 +0200
-+++ sos-4.9.2/bin/sos-collector	2025-04-15 15:10:17.780281627 +0200
-@@ -0,0 +1,5 @@
++++ sos-4.10.0/bin/sos-collector	2025-04-15 15:10:17.780281627 +0200
+@@ -0,0 +1,6 @@
 +#!/usr/bin/python3
 +msg = ("sos-collector binary is deprecated, use 'sos collector' instead")
 +print(msg)
++exit(1)
 +
 +# vim:ts=4 et sw=4
 
