@@ -1,0 +1,101 @@
+From 3efc8888852225396ebb4f0f9ae95edf4e5badfa Mon Sep 17 00:00:00 2001
+From: Pavel Moravec <pmoravec@redhat.com>
+Date: Wed, 20 Aug 2025 20:07:05 +0200
+Subject: [PATCH] [cleaner] Make cleaner's obfuscate_file properly working
+
+The fix is three-fold:
+- obfuscate_file must clean file content and not filename
+- cleaner's main_archive must be populated by parsers first
+- obfuscate_file dont need short_name as it is always called with
+  implicit value of short_name that cleaner will strip itself
+
+Closes: #4109
+Closes: #4110
+
+Signed-off-by: Pavel Moravec <pmoravec@redhat.com>
+---
+ sos/cleaner/__init__.py   | 7 ++++---
+ sos/collector/__init__.py | 9 +++------
+ sos/report/__init__.py    | 9 +++------
+ 3 files changed, 10 insertions(+), 15 deletions(-)
+
+diff --git a/sos/cleaner/__init__.py b/sos/cleaner/__init__.py
+index 4a1470b5..dcd60c66 100644
+--- a/sos/cleaner/__init__.py
++++ b/sos/cleaner/__init__.py
+@@ -537,7 +537,7 @@ third party.
+                 logfile.write(line)
+ 
+         if archive:
+-            self.obfuscate_file(log_name, short_name="sos_logs/cleaner.log")
++            self.obfuscate_file(log_name)
+             self.archive.add_file(log_name, dest="sos_logs/cleaner.log")
+ 
+     def get_new_checksum(self, archive_path):
+@@ -678,6 +678,7 @@ third party.
+         for prepper in self.get_preppers():
+             for archive in self.report_paths:
+                 self._prepare_archive_with_prepper(archive, prepper)
++        self.main_archive.set_parsers(self.parsers)
+ 
+     def obfuscate_report(self, archive):  # pylint: disable=too-many-branches
+         """Individually handle each archive or directory we've discovered by
+@@ -784,8 +785,8 @@ third party.
+             self.ui_log.info("Exception while processing "
+                              f"{archive.archive_name}: {err}")
+ 
+-    def obfuscate_file(self, filename, short_name):
+-        self.main_archive.obfuscate_filename(filename, short_name)
++    def obfuscate_file(self, filename):
++        self.main_archive.obfuscate_arc_files([filename])
+ 
+     def obfuscate_symlinks(self, archive):
+         """Iterate over symlinks in the archive and obfuscate their names.
+diff --git a/sos/collector/__init__.py b/sos/collector/__init__.py
+index 7a414501..e6b55f20 100644
+--- a/sos/collector/__init__.py
++++ b/sos/collector/__init__.py
+@@ -1405,16 +1405,13 @@ this utility or remote systems that it connects to.
+             if do_clean:
+                 _dir = os.path.join(self.tmpdir, self.archive._name)
+                 cleaner.obfuscate_file(
+-                    os.path.join(_dir, 'sos_logs', 'sos.log'),
+-                    short_name='sos.log'
++                        os.path.join(_dir, 'sos_logs', 'sos.log')
+                 )
+                 cleaner.obfuscate_file(
+-                    os.path.join(_dir, 'sos_logs', 'ui.log'),
+-                    short_name='ui.log'
++                    os.path.join(_dir, 'sos_logs', 'ui.log')
+                 )
+                 cleaner.obfuscate_file(
+-                    os.path.join(_dir, 'sos_reports', 'manifest.json'),
+-                    short_name='manifest.json'
++                    os.path.join(_dir, 'sos_reports', 'manifest.json')
+                 )
+ 
+             arc_name = self.archive.finalize(method=None)
+diff --git a/sos/report/__init__.py b/sos/report/__init__.py
+index 074afcff..9fb94d6a 100644
+--- a/sos/report/__init__.py
++++ b/sos/report/__init__.py
+@@ -1571,13 +1571,10 @@ class SoSReport(SoSComponent):
+         # Now, separately clean the log files that cleaner also wrote to
+         if do_clean:
+             _dir = os.path.join(self.tmpdir, self.archive._name)
+-            cleaner.obfuscate_file(os.path.join(_dir, 'sos_logs', 'sos.log'),
+-                                   short_name='sos.log')
+-            cleaner.obfuscate_file(os.path.join(_dir, 'sos_logs', 'ui.log'),
+-                                   short_name='ui.log')
++            cleaner.obfuscate_file(os.path.join(_dir, 'sos_logs', 'sos.log'))
++            cleaner.obfuscate_file(os.path.join(_dir, 'sos_logs', 'ui.log'))
+             cleaner.obfuscate_file(
+-                os.path.join(_dir, 'sos_reports', 'manifest.json'),
+-                short_name='manifest.json'
++                    os.path.join(_dir, 'sos_reports', 'manifest.json')
+             )
+ 
+         # Now, just (optionally) pack the report and print work outcome; let
+-- 
+2.49.0
+

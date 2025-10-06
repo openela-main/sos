@@ -4,8 +4,8 @@
 
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
-Version: 4.9.2
-Release: 1%{?dist}
+Version: 4.10.0
+Release: 4%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
 Source1: sos-audit-%{auditversion}.tgz
@@ -23,6 +23,10 @@ Recommends: python3-pyyaml
 Conflicts: vdsm < 4.40
 Obsoletes: sos-collector <= 1.9
 Patch1: sosreport-binary.patch
+Patch2: 0001-cleaner-Make-cleaner-s-obfuscate_file-properly-worki.patch
+Patch3: 0002-openstack_nova-Improve-scrubbing.patch
+Patch4: 0003-component-Fix-regression-57bbc89-in-toolbox-containe.patch
+Patch5: 0004-revert-PR4092.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -33,7 +37,11 @@ support technicians and developers.
 %prep
 %setup -qn %{name}-%{version}
 %setup -T -D -a1 -q
-%patch -P 1 -p1 
+%patch -P 1 -p1
+%patch -P 2 -p1
+%patch -P 3 -p1
+%patch -P 4 -p1
+%patch -P 5 -p1
 
 %build
 %py3_build
@@ -105,8 +113,26 @@ of the system.  Currently storage and filesystem commands are audited.
 %ghost /etc/audit/rules.d/40-sos-storage.rules
 %license LICENSE
 
-
 %changelog
+* Tue Sep 23 2025 Jan Jansky <jjansky@redhat.com> = 4.10.0-4
+- Update to 4.10.0-4
+  Resolves: RHEL-113795
+
+* Wed Sep 17 2025 Jan Jansky <jjansky@redhat.com> = 4.10.0-3
+- Update to 4.10.0-3
+  Resolves: RHEL-113795
+
+* Wed Sep 17 2025 Jan Jansky <jjansky@redhat.com> = 4.10.0-2
+- Update to 4.10.0-2
+  Resolves: RHEL-113795
+
+* Thu Aug 21 2025 Jan Jansky <jjansky@redhat.com> = 4.10.0-1
+- Update to 4.10.0
+  Resolves: RHEL-110500
+  Resolves: RHEL-110501
+  Resolves: RHEL-110502
+  Resolves: RHEL-110503
+
 * Fri Jul 04 2025 Jan Jansky <jjansky@redhat.com> = 4.9.2-1
 - Update to 4.9.2 
   Resolves: RHEL-101717
