@@ -4,8 +4,8 @@
 
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
-Version: 4.10.0
-Release: 4%{?dist}
+Version: 4.10.1
+Release: 2%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
 Source1: sos-audit-%{auditversion}.tgz
@@ -22,13 +22,13 @@ Recommends: python3-pexpect
 Recommends: python3-pyyaml
 Conflicts: vdsm < 4.40
 Obsoletes: sos-collector
-Patch1: sos-python36-walrus-operator.patch
-Patch2: sosreport-binary.patch
-Patch3: 0001-cleaner-Make-cleaner-s-obfuscate_file-properly-worki.patch
-Patch4: 0002-openstack_nova-Improve-scrubbing.patch
-Patch5: 0003-component-Fix-regression-57bbc89-in-toolbox-containe.patch
-Patch6: 0004-revert-PR4092.patch
-Patch7: 0005-cleaner-rhel8.patch
+Patch1: 0001-python3-walrus-operator.patch
+Patch2: 0002-sosreport-binary.patch
+Patch3: 0003-revert-PR4092.patch
+Patch4: 0004-cleaner-rhel8.patch
+Patch5: 0005-pulpcore-RFE-export-table-contents-as-CSV.patch
+Patch6: 0006-cleaner-Mask-IPv6-addresses-with-trailing-or.patch
+Patch7: 0007-plugin_aws-fix-unable-to-get-metadata-in-aws.py.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -118,6 +118,14 @@ of the system. Currently storage and filesystem commands are audited.
 %license LICENSE
 
 %changelog
+* Fri Dec 05 2025 Jan Jansky <jjansky@redhat.com> = 4.10.1-2
+- Fixing sosreport and sos-collector binary
+  Resolves: RHEL-121468
+
+* Tue Nov 25 2025 Jan Jansky <jjansky@redhat.com> = 4.10.1-1
+- Update to 4.10.1-1
+  Resolves: RHEL-121468
+
 * Tue Sep 23 2025 Jan Jansky <jjansky@redhat.com> = 4.10.0-4
 - Update to 4.10.0-4
   Resolves: RHEL-112413

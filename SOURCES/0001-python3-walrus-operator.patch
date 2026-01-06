@@ -52,3 +52,15 @@
              return _runtime.fmt_container_cmd(container, cmd, quotecmd)
          return ''
 
+--- a/sos/report/plugins/loki.py	2025-11-24 11:20:56.237814760 +0100
++++ b/sos/report/plugins/loki.py	2025-11-24 11:28:37.466603011 +0100
+@@ -143,7 +143,8 @@
+         if self.get_option("collect-logs"):
+             endpoint = self.get_option("endpoint") or "http://localhost:3100"
+             self.labels = []
+-            if labels_option := self.get_option("labels"):
++            labels_option = self.get_option("labels")
++            if labels_option:
+                 if isinstance(labels_option, str) and labels_option:
+                     self.labels.extend(labels_option.split(":"))
+
