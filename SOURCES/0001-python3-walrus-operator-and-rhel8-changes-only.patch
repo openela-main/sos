@@ -64,3 +64,39 @@
                  if isinstance(labels_option, str) and labels_option:
                      self.labels.extend(labels_option.split(":"))
 
+--- a/sos/cleaner/archives/__init__.py	2025-09-22 19:44:51.272619200 +0200
++++ b/sos/cleaner/archives/__init__.py	2025-09-22 23:28:15.116001268 +0200
+@@ -118,6 +118,8 @@ class SoSObfuscationArchive():
+         self.parsers = parsers  # TODO: include this in __init__?
+ 
+     def load_parser_entries(self):
++        self.soslog = logging.getLogger('sos')
++        self.ui_log = logging.getLogger('sos_ui')
+         for parser in self.parsers:
+             parser.load_map_entries()
+ 
+@@ -150,6 +152,7 @@ class SoSObfuscationArchive():
+         return line, count
+ 
+     def obfuscate_arc_files(self, flist):
++        self.load_parser_entries()
+         for filename in flist:
+             self.log_debug(f"    pid={os.getpid()}: obfuscating {filename}")
+             try:
+--- a/sos/cleaner/__init__.py	2025-09-22 19:44:51.272619200 +0200
++++ b/sos/cleaner/__init__.py	2025-09-22 23:32:17.606745778 +0200
+@@ -720,10 +720,11 @@ third party.
+             # based on files' sizes.
+ 
+             files_obfuscated_count = total_sub_count = removed_file_count = 0
++            # two nullification required before processes cloning
++            archive.soslog = None
++            archive.ui_log = None
+             archive_list = [archive for i in range(self.opts.jobs)]
+-            with ProcessPoolExecutor(
+-                    max_workers=self.opts.jobs,
+-                    initializer=archive.load_parser_entries) as executor:
++            with ProcessPoolExecutor(max_workers=self.opts.jobs) as executor:
+                 futures = executor.map(obfuscate_arc_files, archive_list,
+                                        [file_list[i::self.opts.jobs] for i in
+                                         range(self.opts.jobs)])
