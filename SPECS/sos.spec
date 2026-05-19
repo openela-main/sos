@@ -116,7 +116,7 @@ of the system.  Currently storage and filesystem commands are audited.
 %changelog
 * Thu Feb 26 2026 Jan Jansky <jjansky@redhat.com> = 4.10.2-2
 - Update to 4.10.2-2
-  Resolves: RHEL-142634
+  Resolves: RHEL-152471
 
 * Thu Jan 22 2026 Jan Jansky <jjansky@redhat.com> = 4.10.2-1
 - Update to 4.10.2-1
