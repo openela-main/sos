@@ -4,8 +4,8 @@
 
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
-Version: 4.10.2
-Release: 2%{?dist}
+Version: 4.11.0
+Release: 1%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
 Source1: sos-audit-%{auditversion}.tgz
@@ -23,10 +23,7 @@ Recommends: python3-pyyaml
 Conflicts: vdsm < 4.40
 Obsoletes: sos-collector <= 1.9
 Patch1: 0001-sosreport-binary.patch
-Patch2: 0002-gcp-Catch-exceptions-when-PRODUCT_PATH-doesnt-exist.patch
-Patch3: 0003-aap_containerized-Carry-forward-postproc-from-other.patch
-Patch4: 0004-cleaner-Update-filename-after-converting-pem-to-text.patch
-Patch5: 0005-revert-PR4092.patch
+Patch2: 0002-revert-PR4092.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -39,9 +36,6 @@ support technicians and developers.
 %setup -T -D -a1 -q
 %patch -P 1 -p1
 %patch -P 2 -p1
-%patch -P 3 -p1
-%patch -P 4 -p1
-%patch -P 5 -p1
 
 %build
 %py3_build
@@ -114,6 +108,10 @@ of the system.  Currently storage and filesystem commands are audited.
 %license LICENSE
 
 %changelog
+* Thu Apr 02 2026 Jan Jansky <jjansky@redhat.com> = 4.11.0-1
+- Update to 4.11.0-1
+  Resolves: RHEL-157817
+
 * Thu Feb 26 2026 Jan Jansky <jjansky@redhat.com> = 4.10.2-2
 - Update to 4.10.2-2
   Resolves: RHEL-152471
