@@ -39,19 +39,6 @@
              self.db_folder = "/var/snap/juju-db/current/db"
  
          super().setup()
---- a/sos/report/plugins/__init__.py	2025-08-21 12:41:10.418390705 +0200
-+++ b/sos/report/plugins/__init__.py	2025-08-21 12:55:39.546634618 +0200
-@@ -2965,8 +2965,9 @@
-         :rtype: ``str``
-         """
-         if self.container_exists(container, runtime) or \
--           ((_runtime := self._get_container_runtime(runtime)) and
-+           ((self._get_container_runtime(runtime)) and
-            runas is not None):
-+            _runtime = self._get_container_runtime(runtime)
-             return _runtime.fmt_container_cmd(container, cmd, quotecmd)
-         return ''
-
 --- a/sos/report/plugins/loki.py	2025-11-24 11:20:56.237814760 +0100
 +++ b/sos/report/plugins/loki.py	2025-11-24 11:28:37.466603011 +0100
 @@ -143,7 +143,8 @@
@@ -100,3 +87,30 @@
                  futures = executor.map(obfuscate_arc_files, archive_list,
                                         [file_list[i::self.opts.jobs] for i in
                                          range(self.opts.jobs)])
+
+--- a/sos/collector/sosnode.py	2026-04-02 10:15:34.743009569 +0200
++++ b/sos/collector/sosnode.py	2026-04-02 10:17:42.557250748 +0200
+@@ -163,7 +163,8 @@
+         if not self._sudo_binary:
+             _bin = self.opts.sudo_binary.split('/')[-1]
+             # verify the provided binary is at least in our PATH
+-            if ret := self.run_command(f"command -v {_bin}"):
++            ret = self.run_command(f"command -v {_bin}")
++            if ret:
+                 if not ret['status'] == 0:
+                     err = f"Privilege escalation command not in PATH: {_bin}"
+                     self.log_error(err)
+
+--- a/sos/report/plugins/logs.py	2026-04-02 10:19:59.641196712 +0200
++++ b/sos/report/plugins/logs.py	2026-04-02 10:20:28.313299348 +0200
+@@ -38,7 +38,8 @@
+                         # this WILL break on anything other than basic echos
+                         # as shown in the rsyslog documentation
+                         if _ent.startswith('echo '):
+-                            if envc := os.getenv(_ent.split()[1].strip(' $`')):
++                            envc = os.getenv(_ent.split()[1].strip(' $`'))
++                            if envc:
+                                 confs += glob.glob(envc)
+                         else:
+                             confs += glob.glob(_ent)
+
