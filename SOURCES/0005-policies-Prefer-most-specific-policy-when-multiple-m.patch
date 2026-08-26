@@ -1,0 +1,74 @@
+From 6085b2580173a7a43de8b541584c82481c617aa2 Mon Sep 17 00:00:00 2001
+From: asadawar <asadawar@users.noreply.github.com>
+Date: Mon, 27 Jul 2026 17:50:42 +0530
+Subject: [PATCH] [policies] Prefer most specific policy when multiple match
+
+When multiple policies within the same module return True from
+check(), the policy loader now selects the most specific one
+(deepest in the class hierarchy) instead of whichever happens
+to sort first alphabetically.
+
+Previously, import_policy() returned classes sorted by name via
+inspect.getmembers(), and load() picked the first match. This
+caused RHELPolicy to always win over RedHatCoreOSPolicy inside
+a toolbox container on RHCOS, because uppercase 'H' sorts before
+lowercase 'e' in ASCII. Both policies return True in that context
+(RHEL for the container's /etc/redhat-release, RHCOS for the
+host's /host/etc/os-release), but the more specific RHCOS policy
+was never reached.
+
+This has existed since RedHatCoreOSPolicy was introduced in 2019
+(commit fa06bc09c95c) but was never visible because RHCOS had no
+behavioral differences from RHEL until the archive naming change
+in commit 0e919b6.
+
+The fix collects all matching policies from a module and sorts by
+MRO depth (descending), so a subclass is always preferred over
+its parent. This is safe because a subclass that returns True from
+check() is by definition a more precise match than its parent.
+
+Assisted-by: Claude Code <https://claude.ai/code>
+Signed-off-by: asadawar <asadawar@users.noreply.github.com>
+---
+ sos/policies/__init__.py | 18 +++++++++++-------
+ 1 file changed, 11 insertions(+), 7 deletions(-)
+
+diff --git a/sos/policies/__init__.py b/sos/policies/__init__.py
+index 35b3a532..b4920e82 100644
+--- a/sos/policies/__init__.py
++++ b/sos/policies/__init__.py
+@@ -29,20 +29,24 @@ def import_policy(name):
+         return None
+ 
+ 
+-def load(cache={}, sysroot=None, init=None, probe_runtime=True,
++def load(cache=None, sysroot=None, init=None, probe_runtime=True,
+          remote_exec=None, remote_check=''):
++    if cache is None:
++        cache = {}
+     if 'policy' in cache:
+         return cache.get('policy')
+ 
+     import sos.policies.distros
+     helper = ImporterHelper(sos.policies.distros)
++    matches = []
+     for module in helper.get_modules():
+-        for policy in import_policy(module):
+-            if policy.check(remote=remote_check):
+-                cache['policy'] = policy(sysroot=sysroot, init=init,
+-                                         probe_runtime=probe_runtime,
+-                                         remote_exec=remote_exec)
+-                break
++        matches.extend([policy for policy in (import_policy(module) or [])
++                        if policy.check(remote=remote_check)])
++    if matches:
++        matches.sort(key=lambda p: len(p.__mro__), reverse=True)
++        cache['policy'] = matches[0](sysroot=sysroot, init=init,
++                                     probe_runtime=probe_runtime,
++                                     remote_exec=remote_exec)
+ 
+     if sys.platform != 'linux':
+         raise Exception("SoS is not supported on this platform")
+-- 
+2.55.0
+
