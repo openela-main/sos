@@ -4,8 +4,8 @@
 
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
-Version: 4.11.0
-Release: 1%{?dist}
+Version: 4.11.2
+Release: 4%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
 Source1: sos-audit-%{auditversion}.tgz
@@ -23,8 +23,13 @@ Recommends: python3-pyyaml
 Conflicts: vdsm < 4.40
 Obsoletes: sos-collector
 Patch1: 0001-python3-walrus-operator-and-rhel8-changes-only.patch
-Patch2: 0002-sosreport-binary.patch
-Patch3: 0003-revert-PR4092.patch
+Patch2: 0002-remove-unsupported-python36-plugins.patch
+Patch3: 0003-sosreport-binary.patch
+Patch4: 0004-revert-PR4092-and-PR4275.patch
+Patch5: 0005-foreman-installer-Scrub-secrets-in-CLI-arg-dumps.patch
+Patch6: 0006-foremanctl-valkey-PR4376.patch
+Patch7: 0007-policies-Prefer-most-specific-policy-when-multiple-m.patch
+Patch8: 0008-processor-Limit-sys-devices-system-cpu-cpu-subdirs-c.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -38,6 +43,11 @@ support technicians and developers.
 %patch -P 1 -p1 
 %patch -P 2 -p1
 %patch -P 3 -p1
+%patch -P 4 -p1
+%patch -P 5 -p1
+%patch -P 6 -p1
+%patch -P 7 -p1
+%patch -P 8 -p1
 
 %build
 %py3_build
@@ -110,6 +120,15 @@ of the system. Currently storage and filesystem commands are audited.
 %license LICENSE
 
 %changelog
+* Wed Aug 05 2026 Jan Jansky <jjansky@redhat.com> = 4.11.2-4
+- Update to 4.11.2-4
+
+* Fri Jul 17 2026 Jan Jansky <jjansky@redhat.com> = 4.11.2-2
+- Update to 4.11.2-2
+
+* Wed Jul 15 2026 Jan Jansky <jjansky@redhat.com> = 4.11.2-1
+- Update to 4.11.2-1
+  
 * Thu Apr 02 2026 Jan Jansky <jjansky@redhat.com> = 4.11.0-1
 - Update to 4.11.0-1
   Resolves: RHEL-157813

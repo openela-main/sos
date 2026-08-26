@@ -1,0 +1,121 @@
+diff --git a/sos/upload/targets/__init__.py b/sos/upload/targets/__init__.py
+index 9e905e1063..6f72d963ea 100644
+--- a/sos/upload/targets/__init__.py
++++ b/sos/upload/targets/__init__.py
+@@ -540,36 +540,7 @@ def upload_sftp(self, user=None, password=None, user_dir=None):
+             raise Exception("Unable to connect via SFTP to "
+                             f"{self.get_upload_url_string()}")
+
+-        # user_dir indicates that we need to switch into a specific user
+-        # directory. If ChRootDirectory is set, this happens automatically
+-        # so check if the PWD contains the user. If it does, we are
+-        # already in the user directory so set user_dir to None
+-        if user_dir:
+-            user_match = False
+-            ret.sendline('pwd')
+-            pwd_expects = [
+-                'sftp>',
+-                'Invalid command.',
+-                pexpect.TIMEOUT,
+-                pexpect.EOF
+-            ]
+-            pwd_cmd = ret.expect(pwd_expects, timeout=10) == 0
+-            if pwd_cmd:
+-                #  Extract the path from child.before
+-                raw_output = ret.before
+-                user_match = re.search(user, raw_output)
+-            else:
+-                self.ui_log.warning("This server does not support the PWD "
+-                                    "command - unable to verify user "
+-                                    "directory. Attempting upload without "
+-                                    "changing to user directory.")
+-                user_dir = None
+-
+-            if user_match:
+-                user_dir = None
+-
+         # certain implementations require file to be put in the user dir
+-        # so we prepend the user directory to the file path
+         put_cmd = (
+             f"put {self.upload_archive_name} "
+             f"{f'{user_dir}/' if user_dir else ''}"
+diff --git a/sos/upload/targets/redhat.py b/sos/upload/targets/redhat.py
+index 636a645fe6..0cfb80eecd 100644
+--- a/sos/upload/targets/redhat.py
++++ b/sos/upload/targets/redhat.py
+@@ -158,7 +158,6 @@ def upload_sftp(self, user=None, password=None, user_dir=None):
+                             " for obtaining SFTP auth token.")
+         _token = None
+         _user = None
+-        _user_dir = None
+
+         # We may have a device token already if we attempted
+         # to upload via http but the upload failed. So
+@@ -192,7 +191,6 @@ def upload_sftp(self, user=None, password=None, user_dir=None):
+                 # credentials are valid
+                 _user = json.loads(ret.text)['username']
+                 _token = json.loads(ret.text)['token']
+-                _user_dir = f"/users/{_user}"
+             else:
+                 self.ui_log.debug(
+                     f"DEBUG: auth attempt failed (status: {ret.status_code}): "
+@@ -220,7 +218,7 @@ def upload_sftp(self, user=None, password=None, user_dir=None):
+                 )
+         if _user and _token:
+             return super().upload_sftp(user=_user, password=_token,
+-                                       user_dir=_user_dir)
++                                       user_dir=_user)
+         raise Exception("Could not retrieve valid or anonymous credentials")
+
+     def check_file_too_big(self, archive):
+--
+2.47.0
+--- a/sos/upload/targets/__init__.py	2025-09-16 19:57:27.294642506 +0200
++++ b/sos/upload/targets/__init__.py	2025-09-16 19:59:44.498573843 +0200
+@@ -465,7 +465,7 @@
+                 self.upload_password or
+                 self._upload_password)
+ 
+-    def upload_sftp(self, user=None, password=None, user_dir=None):
++    def upload_sftp(self, user=None, password=None):
+         """Attempts to upload the archive to an SFTP location.
+ 
+         Due to the lack of well maintained, secure, and generally widespread
+@@ -540,13 +540,10 @@
+             raise Exception("Unable to connect via SFTP to "
+                             f"{self.get_upload_url_string()}")
+ 
+-        # certain implementations require file to be put in the user dir
+-        put_cmd = (
+-            f"put {self.upload_archive_name} "
+-            f"{f'{user_dir}/' if user_dir else ''}"
+-            f"{self._get_sftp_upload_name()}"
+-        )
++        put_cmd = (f'put {self.upload_archive_name} '
++                   f'{self._get_sftp_upload_name()}')
+         ret.sendline(put_cmd)
++
+         put_expects = [
+             '100%',
+             pexpect.TIMEOUT,
+--- a/sos/upload/targets/redhat.py	2025-09-16 19:57:36.804628207 +0200
++++ b/sos/upload/targets/redhat.py	2025-09-16 20:00:52.578728154 +0200
+@@ -145,7 +145,7 @@
+         return fname
+ 
+     # pylint: disable=too-many-branches
+-    def upload_sftp(self, user=None, password=None, user_dir=None):
++    def upload_sftp(self, user=None, password=None):    
+         """Override the base upload_sftp to allow for setting an on-demand
+         generated anonymous login for the RH SFTP server if a username and
+         password are not given
+@@ -217,8 +217,7 @@
+                     f"{anon.status_code}): {anon.json()}"
+                 )
+         if _user and _token:
+-            return super().upload_sftp(user=_user, password=_token,
+-                                       user_dir=_user)
++            return super().upload_sftp(user=_user, password=_token)
+         raise Exception("Could not retrieve valid or anonymous credentials")
+ 
+     def check_file_too_big(self, archive):

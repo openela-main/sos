@@ -23,22 +23,25 @@
                              res.append(ls[0])
                      except Exception as err:
                          self.log_debug(f"Error parsing sos help: {err}")
---- a/sos/report/plugins/mongodb.py
-+++ b/sos/report/plugins/mongodb.py
-@@ -87,9 +87,11 @@
+--- a/sos/report/plugins/mongodb.py	2026-07-02 09:06:03.860609746 +0200
++++ b/sos/report/plugins/mongodb.py	2026-07-02 09:08:00.003595562 +0200
+@@ -87,10 +87,13 @@
      )
  
      def setup(self):
 -        if get_juju_info := self.path_exists('/var/lib/juju/db'):
-+        if self.path_exists('/var/lib/juju/db'):
-+            get_juju_info = self.path_exists('/var/lib/juju/db')
++        get_juju_info = self.path_exists('/var/lib/juju/db')
++        if get_juju_info:
              self.db_folder = "/var/lib/juju/db"
 -        elif get_juju_info := self.path_exists('/var/snap/juju-db/curent/db'):
-+        elif self.path_exists('/var/snap/juju-db/curent/db'):
-+            get_juju_info = self.path_exists('/var/snap/juju-db/curent/db')
-             self.db_folder = "/var/snap/juju-db/current/db"
+-            self.db_folder = "/var/snap/juju-db/current/db"
++        else:
++            get_juju_info = self.path_exists('/var/snap/juju-db/current/db')
++            if get_juju_info:
++                self.db_folder = "/var/snap/juju-db/current/db"
  
          super().setup()
+ 
 --- a/sos/report/plugins/loki.py	2025-11-24 11:20:56.237814760 +0100
 +++ b/sos/report/plugins/loki.py	2025-11-24 11:28:37.466603011 +0100
 @@ -143,7 +143,8 @@
@@ -51,43 +54,29 @@
                  if isinstance(labels_option, str) and labels_option:
                      self.labels.extend(labels_option.split(":"))
 
---- a/sos/cleaner/archives/__init__.py	2025-09-22 19:44:51.272619200 +0200
-+++ b/sos/cleaner/archives/__init__.py	2025-09-22 23:28:15.116001268 +0200
-@@ -118,6 +118,8 @@ class SoSObfuscationArchive():
-         self.parsers = parsers  # TODO: include this in __init__?
- 
-     def load_parser_entries(self):
-+        self.soslog = logging.getLogger('sos')
-+        self.ui_log = logging.getLogger('sos_ui')
-         for parser in self.parsers:
-             parser.load_map_entries()
- 
-@@ -150,6 +152,7 @@ class SoSObfuscationArchive():
-         return line, count
- 
-     def obfuscate_arc_files(self, flist):
-+        self.load_parser_entries()
-         for filename in flist:
-             self.log_debug(f"    pid={os.getpid()}: obfuscating {filename}")
-             try:
---- a/sos/cleaner/__init__.py	2025-09-22 19:44:51.272619200 +0200
-+++ b/sos/cleaner/__init__.py	2025-09-22 23:32:17.606745778 +0200
-@@ -720,10 +720,11 @@ third party.
-             # based on files' sizes.
- 
+--- a/sos/cleaner/__init__.py
++++ b/sos/cleaner/__init__.py
+@@ -40,6 +40,8 @@ from sos.utilities import (get_human_rea
+
+ # an auxiliary method to kick off child processes over its instances
+ def _obfuscate_arc_files(arc, input_queue, output_queue):
++    arc.soslog = logging.getLogger('sos')
++    arc.ui_log = logging.getLogger('sos_ui')
+     while True:
+         try:
+             file = input_queue.get()
+--- a/sos/cleaner/__init__.py	2026-07-01 13:45:34.298955340 +0200
++++ b/sos/cleaner/__init__.py	2026-07-01 13:47:15.978445308 +0200
+@@ -795,6 +795,9 @@
+             # sentinel mark. That triggers the child processes to report back
+             # to output_queue some stats, and finish.
              files_obfuscated_count = total_sub_count = removed_file_count = 0
 +            # two nullification required before processes cloning
 +            archive.soslog = None
 +            archive.ui_log = None
-             archive_list = [archive for i in range(self.opts.jobs)]
--            with ProcessPoolExecutor(
--                    max_workers=self.opts.jobs,
--                    initializer=archive.load_parser_entries) as executor:
-+            with ProcessPoolExecutor(max_workers=self.opts.jobs) as executor:
-                 futures = executor.map(obfuscate_arc_files, archive_list,
-                                        [file_list[i::self.opts.jobs] for i in
-                                         range(self.opts.jobs)])
-
+             input_queue = multiprocessing.Queue()
+             output_queue = multiprocessing.Queue()
+ 
 --- a/sos/collector/sosnode.py	2026-04-02 10:15:34.743009569 +0200
 +++ b/sos/collector/sosnode.py	2026-04-02 10:17:42.557250748 +0200
 @@ -163,7 +163,8 @@
@@ -114,3 +103,65 @@
                          else:
                              confs += glob.glob(_ent)
 
+--- a/sos/report/plugins/charmed_cruise_control.py	2026-07-16 13:00:22.269714807 +0200
++++ b/sos/report/plugins/charmed_cruise_control.py	2026-07-16 13:01:56.710522628 +0200
+@@ -35,7 +35,8 @@
+             ) as f:
+                 content = f.read().strip()
+ 
+-            if match := re.match(r"balancer: (?P<pwd>\w+),ADMIN", content):
++            match = re.match(r"balancer: (?P<pwd>\w+),ADMIN", content)
++            if match:
+                 pwd = match.group("pwd")
+                 return f"-u balancer:{pwd}"
+
+--- a/sos/report/plugins/__init__.py
++++ b/sos/report/plugins/__init__.py
+@@ -3262,7 +3262,10 @@
+                 # skip forbidden paths; since we might recursivelly copied
+                 # whole directory, we must find the forbidden files in dest
+                 # path and delete the unwanted
+-                base_dir = dest.removesuffix(f"{path.lstrip('/')}")
++                _suffix = path.lstrip('/')
++                base_dir = (dest[:-len(_suffix)]
++                            if dest.endswith(_suffix) and _suffix
++                            else dest)
+                 for relname in [file.relative_to(base_dir).as_posix()
+                                 for file in Path(dest).rglob('*')]:
+                     absname = f"/{relname}"
+
+--- a/sos/cleaner/__init__.py
++++ b/sos/cleaner/__init__.py
+@@ -846,6 +846,8 @@
+             # *all* mapping.all(item) methods - so replaying this will
+             # generate the right datasets!
+             archive.load_parser_entries()
++            archive.soslog = logging.getLogger('sos')
++            archive.ui_log = logging.getLogger('sos_ui')
+
+             try:
+                 self.obfuscate_directory_names(archive)
+
+--- a/sos/report/plugins/charmed_mongodb.py	2026-07-16 14:48:09.639484635 +0200
++++ b/sos/report/plugins/charmed_mongodb.py	2026-07-16 14:49:02.337015148 +0200
+@@ -122,8 +122,8 @@
+                 encoding="utf-8",
+             ) as f:
+                 data = yaml.safe_load(f)
+-
+-            if sharding_conf := data.get("sharding", {}):
++            sharding_conf = data.get("sharding", {})
++            if sharding_conf:
+                 role = sharding_conf.get("clusterRole", "")
+ 
+             return self._match_role(role)
+@@ -144,7 +144,8 @@
+             return None
+ 
+         data = yaml.safe_load(result.get("output", ""))
+-        if sharding_conf := data.get("sharding", {}):
++        sharding_conf = data.get("sharding", {})
++        if sharding_conf:
+             role = sharding_conf.get("clusterRole", "")
+         return self._match_role(role)
+ 
