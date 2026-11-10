@@ -5,7 +5,7 @@
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
 Version: 4.11.2
-Release: 4%{?dist}
+Release: 5%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
 Source1: sos-audit-%{auditversion}.tgz
@@ -113,6 +113,9 @@ of the system.  Currently storage and filesystem commands are audited.
 
 
 %changelog
+* Thu Aug 06 2026 Jan Jansky <jjansky@redhat.com> = 4.11.2-5
+- Update to 4.11.2-5
+
 * Wed Aug 05 2026 Jan Jansky <jjansky@redhat.com> = 4.11.2-4
 - Update to 4.11.2-4
 
@@ -127,7 +130,7 @@ of the system.  Currently storage and filesystem commands are audited.
 
 * Thu Apr 02 2026 Jan Jansky <jjansky@redhat.com> = 4.11.0-1
 - Update 4.11.0-1
-  Resolves: RHEL-157821
+  Resolves: RHEL-157812
 
 * Thu Feb 26 2026 Jan Jansky <jjansky@redhat.com> = 4.10.2-2
 - Update to 4.10.2-2
