@@ -5,7 +5,7 @@
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
 Version: 4.11.2
-Release: 5%{?dist}
+Release: 7%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
 Source1: sos-audit-%{auditversion}.tgz
@@ -27,6 +27,8 @@ Patch2: 0002-foremanctl-valkey-PR4376.patch
 Patch3: 0003-foreman-installer-Scrub-secrets-in-CLI-arg-dumps.patch
 Patch4: 0004-policies-Prefer-most-specific-policy-when-multiple-m.patch
 Patch5: 0005-processor-Limit-sys-devices-system-cpu-cpu-subdirs-c.patch
+Patch6: 0006-CVE-2026-79655.patch
+Patch7: 0007-update-upload-subsystem-for-the-new-RedHat-upload-API.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -42,6 +44,8 @@ support technicians and developers.
 %patch -P 3 -p1
 %patch -P 4 -p1
 %patch -P 5 -p1
+%patch -P 6 -p1
+%patch -P 7 -p1
 
 %build
 %py3_build
@@ -113,6 +117,18 @@ of the system.  Currently storage and filesystem commands are audited.
 
 
 %changelog
+* Wed Oct 14 2026 Jan Jansky <jjansky@redhat.com> = 4.11.2-7
+- Update to 4.11.2-7
+
+* Sat Oct 10 2026 Jan Jansky <jjansky@redhat.com> = 4.11.2-6.2
+- Update to 4.11.2-6.2
+
+* Thu Oct 08 2026 Jan Jansky <jjansky@redhat.com> = 4.11.2-6.1
+- Update to 4.11.2-6.1
+
+* Tue Oct 06 2026 Jan Jansky <jjansky@redhat.com> = 4.11.2-6
+- Update to 4.11.2-6
+
 * Thu Aug 06 2026 Jan Jansky <jjansky@redhat.com> = 4.11.2-5
 - Update to 4.11.2-5
 
