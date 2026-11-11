@@ -1,0 +1,1510 @@
+From 0138f7d61c56cce0c69232d8e60d99891d6c193f Mon Sep 17 00:00:00 2001
+From: Jose Castillo <jcastillo@redhat.com>
+Date: Thu, 16 Apr 2026 08:47:15 +0100
+Subject: [PATCH] [auth] Add logic to store and retrieve auth tokens
+
+This commit implements functionality to store and retrieve
+authorization tokens obtained remotely from a
+distribution-defined authentication portal. This
+enables users to reuse previously obtained tokens
+that remain valid, eliminating the need to request
+a new token for each subsequent interaction.
+
+Related: RHEL-167336, SUPDEV-186
+
+Signed-off-by: Jose Castillo <jcastillo@redhat.com>
+---
+ man/en/sos-upload.1           |  10 ++
+ sos/policies/auth/__init__.py | 201 +++++++++++++++++++++++++++++-----
+ sos/upload/targets/redhat.py  |   7 +-
+ 3 files changed, 191 insertions(+), 27 deletions(-)
+
+diff --git a/man/en/sos-upload.1 b/man/en/sos-upload.1
+index 624458c2..b2ead4b3 100644
+--- a/man/en/sos-upload.1
++++ b/man/en/sos-upload.1
+@@ -136,6 +136,16 @@ Secret key for the S3 bucket
+ .B \-  --upload-s3-object-prefix PREFIX
+ Prefix for the S3 object/key
+ 
++.SH TOKEN STORAGE
++When using web-based authentication for uploads, \fBsos\fR stores the
++refresh token locally in the file \fI~/.sos-oidc-token.json\fR so that
++subsequent uploads do not require re-authenticating through a browser.
++.PP
++\fBNote:\fR the token is stored in \fBplain text\fR with file permissions
++set to 0600 (owner read/write only).  If these permissions are changed,
++sos will issue a warning.  Users should ensure that the storage location
++and its parent directories have appropriately restrictive permissions.
++
+ .SH SEE ALSO
+ .BR sos (1)
+ .BR sos-report (1)
+diff --git a/sos/policies/auth/__init__.py b/sos/policies/auth/__init__.py
+index 7bb36ff4..b0524024 100644
+--- a/sos/policies/auth/__init__.py
++++ b/sos/policies/auth/__init__.py
+@@ -16,13 +16,15 @@ except ImportError:
+     REQUESTS_LOADED = False
+ import time
+ from datetime import datetime, timedelta, timezone
++import os
++import json
+ 
+-from sos.utilities import TIMEOUT_DEFAULT
++from sos.utilities import TIMEOUT_DEFAULT, path_join
+ 
+ DEVICE_AUTH_CLIENT_ID = "sos-tools"
+ GRANT_TYPE_DEVICE_CODE = "urn:ietf:params:oauth:grant-type:device_code"
+-
+-logger = logging.getLogger("sos")
++OIDC_TOKEN_FILE = ".sos-oidc-token.json"
++DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+ 
+ 
+ class DeviceAuthorizationClass:
+@@ -30,29 +32,117 @@ class DeviceAuthorizationClass:
+     Device Authorization Class
+     """
+ 
+-    def __init__(self, client_identifier_url, token_endpoint):
++    def __init__(self, client_identifier_url, token_endpoint, token_dir):
+ 
+         self._access_token = None
+         self._access_expires_at = None
+         self.__device_code = None
++        self._token_dir = f"{token_dir}/"
+ 
+         self.client_identifier_url = client_identifier_url
+         self.token_endpoint = token_endpoint
++        self.ui_log = logging.getLogger('sos_ui')
+         self._use_device_code_grant()
+ 
+-    def _use_device_code_grant(self):
++    def try_read_refresh_token(self, base_path):
+         """
+-        Start the device auth flow. In the future we will
+-        store the tokens in an in-memory keyring.
++        Try to read locally stored refresh token
++
++        Args:
++            base_path (str): Local path where OIDC token is stored
+ 
++        Returns:
++            str: Returns OIDC refresh token information if found,
++            otherwise None
+         """
++        token_file_path = path_join(base_path, OIDC_TOKEN_FILE)
++        if not os.path.exists(token_file_path):
++            self.ui_log.info("Cannot find "
++                             f"{OIDC_TOKEN_FILE} file using {base_path} "
++                             "path, so we'll request a new token.")
++            return None
++
++        self.ui_log.info("Retrieving OIDC token information from local "
++                         f"{OIDC_TOKEN_FILE} file")
++        try:
++            with open(token_file_path, "r", encoding='utf-8') as fileobj:
++                read_in = fileobj.read()
++        except OSError as err:
++            self.ui_log.error("There was an exception while reading "
++                              f"the token file - {err}")
++            return None
+ 
+-        self._request_device_code()
+-        print(
+-            "Please visit the following URL to authenticate this"
+-            f" device: {self._verification_uri_complete}"
+-        )
+-        self.poll_for_auth_completion()
++        if not read_in.strip():
++            self.ui_log.info(f"The {OIDC_TOKEN_FILE} file was empty.")
++            return None
++
++        try:
++            token_data = json.loads(read_in)
++        except json.JSONDecodeError:
++            self.ui_log.error("There was an issue decoding the JSON file "
++                              f"while loading {OIDC_TOKEN_FILE}")
++            self._remove_token_file(token_file_path)
++            return None
++
++        refresh_token = token_data.get("refresh_token")
++        dt_str = token_data.get("refresh_expires_at")
++        if not refresh_token or not dt_str:
++            self.ui_log.error(
++                "Locally cached offline token is missing required fields "
++                f"in {OIDC_TOKEN_FILE}. We will request a new token."
++            )
++            self._remove_token_file(token_file_path)
++            return None
++
++        try:
++            refresh_expires_at = datetime.strptime(dt_str, DATETIME_FORMAT)
++            refresh_expires_at = refresh_expires_at.replace(
++                tzinfo=timezone.utc
++            )
++        except ValueError:
++            self.ui_log.error(
++                f"Invalid refresh_expires_at in {OIDC_TOKEN_FILE}: "
++                f"{dt_str!r}"
++            )
++            self._remove_token_file(token_file_path)
++            return None
++
++        if refresh_expires_at - timedelta(seconds=300) <= \
++                datetime.now(timezone.utc):
++            self.ui_log.error("Locally cached offline token has expired. "
++                              "We will remove the old file and"
++                              " request a new token.")
++            self._remove_token_file(token_file_path)
++            return None
++
++        return refresh_token
++
++    def _remove_token_file(self, token_file_path):
++        """Safely remove a cached token file, logging on failure."""
++        try:
++            os.remove(token_file_path)
++        except FileNotFoundError:
++            pass  # Already gone -- nothing to do
++        except OSError as err:
++            self.ui_log.warning(
++                f"Unable to remove cached token file {token_file_path}: {err}"
++            )
++
++    def _use_device_code_grant(self, force=False):
++        """
++        Start the device auth flow.
++        """
++        stored_refresh_token = None if force else \
++            self.try_read_refresh_token(self._token_dir)
++        if not stored_refresh_token:
++            self._request_device_code()
++            self.ui_log.info(
++                "Please visit the following URL to authenticate this"
++                f" device: {self._verification_uri_complete}"
++            )
++            self.poll_for_auth_completion()
++        else:
++            self._use_refresh_token_grant(stored_refresh_token)
+ 
+     def _request_device_code(self):
+         """
+@@ -108,7 +198,7 @@ class DeviceAuthorizationClass:
+                 status_code = check_auth_completion.status_code
+ 
+                 if status_code == 200:
+-                    logger.info("The SSO authentication is successful")
++                    self.ui_log.info("The SSO authentication is successful")
+                     self._set_token_data(check_auth_completion.json())
+                 if status_code not in [200, 400]:
+                     raise Exception(status_code, check_auth_completion.text)
+@@ -117,13 +207,13 @@ class DeviceAuthorizationClass:
+                         ("authorization_pending", "slow_down"):
+                     raise Exception(status_code, check_auth_completion.text)
+             except requests.exceptions.RequestException as e:
+-                logger.error(f"Error was found while posting a request: {e}")
++                self.ui_log.error("An error was found while posting a request:"
++                                  f" {e}")
+ 
+     def _set_token_data(self, token_data):
+         """
+         Set the class attributes as per the input token_data received.
+-        In the future we will persist the token data in a local,
+-        in-memory keyring, to avoid visting the browser frequently.
++
+         :param token_data: Token data containing access_token, refresh_token
+         and their expiry etc.
+         """
+@@ -137,6 +227,9 @@ class DeviceAuthorizationClass:
+         else:
+             self._refresh_expires_at = datetime.now(timezone.utc) + \
+                 timedelta(seconds=self._refresh_expires_in)
++        if not self.persist_refresh_token(self._token_dir):
++            self.ui_log.warning("Token obtained but could not "
++                                f"be persisted locally in {self._token_dir}")
+ 
+     def get_access_token(self):
+         """
+@@ -193,20 +286,78 @@ class DeviceAuthorizationClass:
+         refresh_token_res = requests.post(self.token_endpoint,
+                                           data=refresh_token_data,
+                                           timeout=TIMEOUT_DEFAULT)
++        try:
++            refresh_token_res_json = refresh_token_res.json()
++        except ValueError:
++            refresh_token_res_json = {}
+ 
+         if refresh_token_res.status_code == 200:
+-            self._set_token_data(refresh_token_res.json())
++            self._set_token_data(refresh_token_res_json)
+ 
+         elif refresh_token_res.status_code == 400 and 'invalid' in\
+-                refresh_token_res.json()['error']:
+-            logger.warning("Problem while fetching the new tokens from refresh"
+-                           f" token grant - {refresh_token_res.status_code} "
+-                           f"{refresh_token_res.json()['error']}."
+-                           " New Device code will be requested !")
+-            self._use_device_code_grant()
++                (refresh_token_res_json.get('error') or ''):
++            self.ui_log.warning("Problem while fetching the new tokens "
++                                f"from refresh token grant "
++                                f"- {refresh_token_res.status_code} "
++                                f"{refresh_token_res_json.get('error')}."
++                                " New Device code will be requested!")
++            token_file_path = path_join(self._token_dir, OIDC_TOKEN_FILE)
++            self._remove_token_file(token_file_path)
++            self._use_device_code_grant(force=True)
+         else:
+             raise Exception(
+                 "Something went wrong while using the "
+                 "Refresh token grant for fetching tokens:"
+                 f" Returned status code {refresh_token_res.status_code}"
+-                f" and error {refresh_token_res.json()['error']}")
++                f" and error {refresh_token_res_json.get('error')}")
++
++    def persist_refresh_token(self, base_path):
++        """
++        Persist current refresh token to a local file
++        Args:
++            base_path (str): Local path to a directory where token
++            should be stored
++
++        Returns:
++            bool: True if refresh token was successfully persisted,
++            otherwise False
++        """
++        if self.is_refresh_token_valid():
++            # ToDo: While now we'll use the user's home directory
++            # in the future we may want to offer the possibility
++            # of specifying the directory (making sure the user knows
++            # the security implications of this decision)
++            try:
++                os.makedirs(base_path, mode=0o700, exist_ok=True)
++                token_data = {
++                    "refresh_token": self._refresh_token,
++                    "refresh_expires_at": self._refresh_expires_at.strftime(
++                        DATETIME_FORMAT
++                        )
++                }
++                token_file_path = path_join(base_path, OIDC_TOKEN_FILE)
++                fd = os.open(token_file_path,
++                             os.O_CREAT | os.O_WRONLY | os.O_TRUNC,
++                             0o600)
++                with os.fdopen(fd, 'w', encoding='utf-8') as fileobj:
++                    json.dump(token_data, fileobj)
++                self.ui_log.info("The new refresh token was successfully"
++                                 f" saved to {token_file_path}")
++                stat_info = os.stat(token_file_path)
++                if stat_info.st_mode & 0o077:
++                    self.ui_log.warning(
++                        f"Token file {token_file_path} has overly "
++                        "permissive permissions. The token is stored "
++                        "in plain text, so please ensure that only the "
++                        "owner has access to this file"
++                    )
++                return True
++            except OSError as err:
++                self.ui_log.error(
++                    f"Failed to persist refresh token: {err}"
++                )
++                return False
++        self.ui_log.error("Cannot save invalid refresh token")
++        return False
++
++# vim: set et ts=4 sw=4 :
+diff --git a/sos/upload/targets/redhat.py b/sos/upload/targets/redhat.py
+index 636a645f..aa0c769f 100644
+--- a/sos/upload/targets/redhat.py
++++ b/sos/upload/targets/redhat.py
+@@ -8,6 +8,7 @@
+ # See the LICENSE file in the source distribution for further information.
+ import os
+ import json
++from pathlib import Path
+ from sos.upload.targets import UploadTarget
+ from sos.utilities import convert_bytes, TIMEOUT_DEFAULT
+ from sos.policies.auth import DeviceAuthorizationClass
+@@ -111,7 +112,8 @@ class RHELUploadTarget(UploadTarget):
+         # longer than the token timeout
+         RHELAuth = DeviceAuthorizationClass(
+                 self.client_identifier_url,
+-                self.token_endpoint
++                self.token_endpoint,
++                Path.home()
+             )
+         self._device_token = RHELAuth.get_access_token()
+         self.ui_log.info("Device authorized correctly. Uploading file to "
+@@ -167,7 +169,8 @@ class RHELUploadTarget(UploadTarget):
+             try:
+                 RHELAuth = DeviceAuthorizationClass(
+                     self.client_identifier_url,
+-                    self.token_endpoint
++                    self.token_endpoint,
++                    Path.home()
+                 )
+             except Exception as e:
+                 # We end up here if the user cancels the device
+-- 
+2.55.0
+
+From 05c190927dd40fbc501032c51f44368c4cfc60e1 Mon Sep 17 00:00:00 2001
+From: Suraj Patil <surajpatil522@gmail.com>
+Date: Sun, 9 Aug 2026 22:16:49 +0530
+Subject: [PATCH] [man] Document S3 upload options for sos report
+
+sos report accepts six S3 upload options - endpoint, region,
+bucket, access-key, secret-key and object-prefix - but
+sos-report.1 does not mention any of them. sos-upload.1
+documents the same six options in full, so the two man pages
+disagree about what sos can do.
+
+The --upload-protocol entry compounds this: it lists the valid
+values as 'auto', 'https', 'ftp' and 'sftp', while argparse
+accepts {auto,https,ftp,sftp,s3}. A reader of the man page
+would conclude S3 upload is not supported.
+
+Add the six options to the synopsis and the option list, using
+the same wording as sos-upload.1 so the two pages stay
+consistent, and add 's3' to the documented protocol values.
+
+sos-upload.1 documents the same six options but four are written
+with \--- and two with "\-  --", so they render with a spurious
+leading dash. Corrected to \-- to match the other entries in the
+file.
+
+Signed-off-by: Suraj Patil <surajpatil522@gmail.com>
+---
+ man/en/sos-report.1 | 26 +++++++++++++++++++++++++-
+ man/en/sos-upload.1 | 12 ++++++------
+ 2 files changed, 31 insertions(+), 7 deletions(-)
+
+diff --git a/man/en/sos-report.1 b/man/en/sos-report.1
+index efab2511..1696fcc1 100644
+--- a/man/en/sos-report.1
++++ b/man/en/sos-report.1
+@@ -43,6 +43,12 @@ sos_report \- Collect and package diagnostic and support data
+           [--upload-directory dir] [--upload-pass pass]\fR
+           [--upload-no-ssl-verify] [--upload-method]\fR
+           [--upload-protocol protocol]\fR
++          [--upload-s3-endpoint endpoint]\fR
++          [--upload-s3-region region]\fR
++          [--upload-s3-bucket bucket]\fR
++          [--upload-s3-access-key key]\fR
++          [--upload-s3-secret-key key]\fR
++          [--upload-s3-object-prefix prefix]\fR
+           [--experimental]\fR
+           [-h|--help]\fR
+ 
+@@ -495,7 +501,25 @@ For RHEL systems, setting this option to \fBsftp\fR will skip the initial attemp
+ upload to the Red Hat Customer Portal, and only attempt an upload to Red Hat's SFTP server,
+ which is typically used as a fallback target.
+ 
+-Valid values for PROTO are: 'auto' (default), 'https', 'ftp', 'sftp'.
++Valid values for PROTO are: 'auto' (default), 'https', 'ftp', 'sftp', 's3'.
++.TP
++.B \--upload-s3-endpoint ENDPOINT
++Endpoint to upload to for S3 bucket
++.TP
++.B \--upload-s3-region REGION
++Region to upload to for S3 bucket
++.TP
++.B \--upload-s3-bucket BUCKET
++Name of the S3 bucket to upload to
++.TP
++.B \--upload-s3-access-key KEY
++Access key for the S3 bucket
++.TP
++.B \--upload-s3-secret-key KEY
++Secret key for the S3 bucket
++.TP
++.B \--upload-s3-object-prefix PREFIX
++Prefix for the S3 object/key
+ .TP
+ .B \--experimental
+ Enable plugins marked as experimental. Experimental plugins may not have
+diff --git a/man/en/sos-upload.1 b/man/en/sos-upload.1
+index b2ead4b3..53494667 100644
+--- a/man/en/sos-upload.1
++++ b/man/en/sos-upload.1
+@@ -113,27 +113,27 @@ If this option is not called, sos will try to determine the local target
+ and use it for uploads.
+ 
+ .TP
+-.B \---upload-s3-endpoint ENDPOINT
++.B \--upload-s3-endpoint ENDPOINT
+ Endpoint to upload to for S3 bucket
+ 
+ .TP
+-.B \---upload-s3-region REGION
++.B \--upload-s3-region REGION
+ Region to upload to for S3 bucket
+ 
+ .TP
+-.B \---upload-s3-bucket BUCKET
++.B \--upload-s3-bucket BUCKET
+ Name of the S3 bucket to upload to
+ 
+ .TP
+-.B \---upload-s3-access-key KEY
++.B \--upload-s3-access-key KEY
+ Access key for the S3 bucket
+ 
+ .TP
+-.B \-  --upload-s3-secret-key KEY
++.B \--upload-s3-secret-key KEY
+ Secret key for the S3 bucket
+ 
+ .TP
+-.B \-  --upload-s3-object-prefix PREFIX
++.B \--upload-s3-object-prefix PREFIX
+ Prefix for the S3 object/key
+ 
+ .SH TOKEN STORAGE
+-- 
+2.55.0
+
+From 30ff60e13cd46a1ee97e916ecddf333b8e8b9cea Mon Sep 17 00:00:00 2001
+From: Jose Castillo <jcastillo@redhat.com>
+Date: Thu, 10 Sep 2026 09:38:22 +0100
+Subject: [PATCH] [upload] Add --preauth option to pre-authorize a system
+
+Add a --preauth option to `sos upload` that runs the device
+authorization flow and prsists the OIDC refresh token locally,
+without uploading a file. This removes the interactive,
+browser-based authentication step from the upload itself, allowing
+a system to be authorized ahead of time for later unattended or
+scripted uploads.
+
+The FILE argument is now optional so that `sos upload --preauth`
+can be run on its own; a missing FILE without --preauth still
+reports an error.
+
+Related: RHEL-29345
+
+Signed-off-by: Jose Castillo <jcastillo@redhat.com>
+---
+ man/en/sos-upload.1            |  8 ++++++++
+ sos/upload/__init__.py         | 35 +++++++++++++++++++++++++++++++---
+ sos/upload/targets/__init__.py | 12 ++++++++++++
+ sos/upload/targets/redhat.py   | 24 +++++++++++++++++++++++
+ sos/upload/targets/ubuntu.py   |  8 ++++++++
+ 5 files changed, 84 insertions(+), 3 deletions(-)
+
+diff --git a/man/en/sos-upload.1 b/man/en/sos-upload.1
+index 53494667..b33a5e8c 100644
+--- a/man/en/sos-upload.1
++++ b/man/en/sos-upload.1
+@@ -19,6 +19,7 @@ sos_upload \- Upload files like previously generated sos reports or logs to a po
+           [--upload-s3-access-key key]\fR
+           [--upload-s3-secret-key key]\fR
+           [--upload-s3-object-prefix prefix]\fR
++          [--preauth]\fR
+ 
+ .PP
+ .SH DESCRIPTION
+@@ -136,6 +137,13 @@ Secret key for the S3 bucket
+ .B \--upload-s3-object-prefix PREFIX
+ Prefix for the S3 object/key
+ 
++.TP
++.B \-\-preauth
++Pre-authorize this system by running the authentication flow and storing
++the resulting token locally (see \fBTOKEN STORAGE\fR), without uploading a
++file. Useful to prepare a system for later, unattended uploads. Only
++supported for upload targets that use token-based authentication.
++
+ .SH TOKEN STORAGE
+ When using web-based authentication for uploads, \fBsos\fR stores the
+ refresh token locally in the file \fI~/.sos-oidc-token.json\fR so that
+diff --git a/sos/upload/__init__.py b/sos/upload/__init__.py
+index 48f0cf85..cdbcd1a4 100644
+--- a/sos/upload/__init__.py
++++ b/sos/upload/__init__.py
+@@ -47,7 +47,8 @@ class SoSUpload(SoSComponent):
+         'upload_s3_access_key': None,
+         'upload_s3_secret_key': None,
+         'upload_s3_object_prefix': None,
+-        'upload_target': None
++        'upload_target': None,
++        'preauth': False
+     }
+ 
+     def __init__(self, parser=None, args=None, cmdline=None, in_place=False,
+@@ -81,8 +82,14 @@ class SoSUpload(SoSComponent):
+             'Upload Options',
+             'These options control how upload manages files'
+             )
+-        upload_grp.add_argument("upload_file", metavar="FILE",
++        upload_grp.add_argument("upload_file", metavar="FILE", nargs='?',
+                                 help="The file or archive to upload")
++        upload_grp.add_argument("--preauth", default=False,
++                                action='store_true',
++                                help="Pre-authorize this system and store an"
++                                " auth token locally without uploading a"
++                                " file. Only supported for targets that"
++                                " use token-based authentication.")
+         upload_grp.add_argument("--case-id", action="store", dest="case_id",
+                                 help="specify case identifier")
+         upload_grp.add_argument("--upload-url", default=None,
+@@ -274,9 +281,14 @@ this utility.
+     def execute(self):
+         try:
+             self.pre_work()
+-            if self.from_cmdline:
++            if self.from_cmdline and not self.opts.preauth:
+                 self.intro()
+                 self.archive = self.opts.upload_file
++                if not self.archive:
++                    self.ui_log.error(
++                        _("No FILE provided to upload. Provide a FILE, or"
++                          " use --preauth to only store an auth token."))
++                    sys.exit(1)
+                 self.caseid = self.policy.prompt_for_case_id(
+                     cmdline_opts=self.opts
+                 )
+@@ -295,6 +307,23 @@ this utility.
+                     "Exiting."
+                 )
+                 sys.exit(1)
++            if self.from_cmdline and self.opts.preauth:
++                try:
++                    self.upload_target.preauthorize()
++                    self.ui_log.info(
++                        _("System pre-authorized successfully; auth token "
++                          "stored locally.")
++                    )
++                    sys.exit(0)
++                except NotImplementedError:
++                    self.ui_log.error(_(
++                        "The selected upload target "
++                        f"'{self.upload_target.name()}' does not support"
++                        " --preauth."))
++                    sys.exit(1)
++                except Exception as err:
++                    self.ui_log.error(_(f"Pre-authorization failed: {err}"))
++                    sys.exit(1)
+             self.upload_target.pre_work(self.get_commons())
+             try:
+                 if os.stat(self.archive).st_size > 0:
+diff --git a/sos/upload/targets/__init__.py b/sos/upload/targets/__init__.py
+index 153c6432..0259caa2 100644
+--- a/sos/upload/targets/__init__.py
++++ b/sos/upload/targets/__init__.py
+@@ -114,6 +114,18 @@ class UploadTarget():
+     def get_target_id(self):
+         return self.upload_target_id
+ 
++    def preauthorize(self):
++        """Pre-authorize this system and persist an auth token
++        locally without uploading anything.
++
++        Targets that use token-based (e.g. OIDC device-code)
++        auth should override this. The default is to declare
++        it unsupported.
++        """
++        raise NotImplementedError(
++            "This upload target does not support pre-authorization."
++        )
++
+     @classmethod
+     def name(cls):
+         """Returns the upload target's name as a string."""
+diff --git a/sos/upload/targets/redhat.py b/sos/upload/targets/redhat.py
+index aa0c769f..4127be17 100644
+--- a/sos/upload/targets/redhat.py
++++ b/sos/upload/targets/redhat.py
+@@ -47,6 +47,30 @@ class RHELUploadTarget(UploadTarget):
+         """Return true if we are running in a RHEL system"""
+         return isinstance(self.commons['policy'], RHELPolicy)
+ 
++    def preauthorize(self):
++        """Run the device auth flow and persist the refresh token locally
++        without performing an upload.
++        """
++        if not REQUESTS_LOADED:
++            raise Exception("python3-requests is not installed and is required"
++                            " for obtaining an auth token.")
++        try:
++            RHELAuth = DeviceAuthorizationClass(
++                self.client_identifier_url,
++                self.token_endpoint,
++                Path.home()
++            )
++        except Exception as e:
++            if "end user denied" in str(e):
++                raise Exception(
++                    "Device authorization was cancelled by the user") from e
++            raise
++        # Touch the access token so a fresh grant is validated end-to-end.
++        # This also confirms the refresh token was persisted by __init__.
++        self._device_token = RHELAuth.get_access_token()
++        if not self._device_token:
++            raise Exception("Failed to obtain a valid auth token.")
++
+     def pre_work(self, hook_commons):
+ 
+         super().pre_work(hook_commons)
+diff --git a/sos/upload/targets/ubuntu.py b/sos/upload/targets/ubuntu.py
+index 66ab6e56..ca87caf2 100644
+--- a/sos/upload/targets/ubuntu.py
++++ b/sos/upload/targets/ubuntu.py
+@@ -26,6 +26,14 @@ class UbuntuUploadTarget(UploadTarget):
+         """ Return true if we are running in a Ubuntu system"""
+         return isinstance(self.commons['policy'], UbuntuPolicy)
+ 
++    def preauthorize(self):
++        """Ubuntu uploads do not use token-based authentication, so
++        pre-authorization is not supported.
++        """
++        raise NotImplementedError(
++            "This upload target does not support pre-authorization."
++        )
++
+     def get_upload_https_auth(self, user=None, password=None):
+         if self.upload_url.startswith(self._upload_url):
+             return (self._upload_user, self._upload_password)
+-- 
+2.55.0
+
+From bf3ebc4339b176f236988bf8e891a5ebb55506f1 Mon Sep 17 00:00:00 2001
+From: Jose Castillo <jcastillo@redhat.com>
+Date: Fri, 24 Jul 2026 15:10:32 +0100
+Subject: [PATCH] [upload] Update upload subsystem for the new Red Hat upload
+ API
+
+The Red Hat Customer Portal is migrating to a new upload API, so the
+upload target needs to be updated to use the new endpoints and flow.
+
+Archives up to 5 GB are uploaded in a single HTTP PUT request, while
+archives exceeding that threshold are split into 128 MiB chunks and
+uploaded in parallel. As a consequence of the new upload limits,
+we don't perform fallback to SFTP depending on upload size, only
+when the upload fails or the user selects it explicitly.
+
+The multipart flow handles session initialization, per-chunk retry,
+session expiration checks, and automatic abort on failure.
+A new --upload-threads option (1-16, default 4) controls the
+number of parallel upload threads per chunk used.
+
+Related: RHEL-182746
+
+Signed-off-by: Jose Castillo <jcastillo@redhat.com>
+---
+ man/en/sos-report.1            |   8 +
+ man/en/sos-upload.1            |  10 +
+ sos/policies/auth/__init__.py  |   2 +-
+ sos/report/__init__.py         |  13 +
+ sos/upload/__init__.py         |  15 +-
+ sos/upload/targets/__init__.py |   1 +
+ sos/upload/targets/redhat.py   | 584 ++++++++++++++++++++++++++++++++-
+ 7 files changed, 615 insertions(+), 18 deletions(-)
+
+diff --git a/man/en/sos-report.1 b/man/en/sos-report.1
+index c0892bf4..d16d88c9 100644
+--- a/man/en/sos-report.1
++++ b/man/en/sos-report.1
+@@ -52,6 +52,7 @@ sos_report \- Collect and package diagnostic and support data
+           [--upload-s3-access-key key]\fR
+           [--upload-s3-secret-key key]\fR
+           [--upload-s3-object-prefix prefix]\fR
++          [--upload-threads threads]\fR
+           [--experimental]\fR
+           [-h|--help]\fR
+ 
+@@ -552,6 +553,13 @@ Secret key for the S3 bucket
+ .B \--upload-s3-object-prefix PREFIX
+ Prefix for the S3 object/key
+ .TP
++.B \--upload-threads THREADS
++Number of threads to use for multipart uploads (1\-16, default: 4).
++When an archive exceeds a certain size, defined in the targets, it is
++uploaded in parallel chunks using this many threads. Higher values
++speed up the upload but consume more bandwidth and memory, as each
++thread holds a 128 MiB chunk in memory.
++.TP
+ .B \--experimental
+ Enable plugins marked as experimental. Experimental plugins may not have
+ been tested for this port or may still be under active development.
+diff --git a/man/en/sos-upload.1 b/man/en/sos-upload.1
+index b33a5e8c..9777aa38 100644
+--- a/man/en/sos-upload.1
++++ b/man/en/sos-upload.1
+@@ -20,6 +20,7 @@ sos_upload \- Upload files like previously generated sos reports or logs to a po
+           [--upload-s3-secret-key key]\fR
+           [--upload-s3-object-prefix prefix]\fR
+           [--preauth]\fR
++          [--upload-threads threads]\fR
+ 
+ .PP
+ .SH DESCRIPTION
+@@ -115,6 +116,15 @@ and use it for uploads.
+ 
+ .TP
+ .B \--upload-s3-endpoint ENDPOINT
++.B \--upload-threads THREADS
++Number of threads to use for multipart uploads (1\-16, default: 4).
++When an archive exceeds a certain size, defined in the targets, it is
++uploaded in parallel chunks using this many threads. Higher values
++speed up the upload but consume more bandwidth and memory, as each
++thread holds a 128 MiB chunk in memory.
++
++.TP
++.B \---upload-s3-endpoint ENDPOINT
+ Endpoint to upload to for S3 bucket
+ 
+ .TP
+diff --git a/sos/policies/auth/__init__.py b/sos/policies/auth/__init__.py
+index b0524024..362dcb3f 100644
+--- a/sos/policies/auth/__init__.py
++++ b/sos/policies/auth/__init__.py
+@@ -150,7 +150,7 @@ class DeviceAuthorizationClass:
+         requesting a new device code.
+ 
+         """
+-        data = f"client_id={DEVICE_AUTH_CLIENT_ID}"
++        data = f"client_id={DEVICE_AUTH_CLIENT_ID}&scope=openid+api.graphql"
+         headers = {'content-type': 'application/x-www-form-urlencoded'}
+         if not REQUESTS_LOADED:
+             raise Exception("python3-requests is not installed and is required"
+diff --git a/sos/report/__init__.py b/sos/report/__init__.py
+index 7109dcdd..e9ada9f9 100644
+--- a/sos/report/__init__.py
++++ b/sos/report/__init__.py
+@@ -149,6 +149,7 @@ class SoSReport(SoSComponent):
+         'upload_s3_secret_key': None,
+         'upload_s3_object_prefix': None,
+         'upload_target': None,
++        'upload_threads': 4,
+         'add_preset': '',
+         'del_preset': '',
+         'treat_certificates': 'obfuscate'
+@@ -354,6 +355,18 @@ class SoSReport(SoSComponent):
+                                 choices=['auto', 'https', 'ftp', 'sftp',
+                                          's3'],
+                                 help="Manually specify the upload protocol")
++        report_grp.add_argument("--upload-threads", default=4, type=int,
++                                choices=range(1, 17),
++                                metavar="THREADS",
++                                help=("Number of threads for multipart "
++                                      "uploads. When an archive exceeds "
++                                      "a certain size, defined in the "
++                                      "targets, it is uploaded in "
++                                      "parallel chunks using this many "
++                                      "threads (1-16, default: 4). "
++                                      "Each thread holds a 128 MiB chunk "
++                                      "in memory, e.g. 4 threads use "
++                                      "~512 MiB"))
+ 
+         # Group to make add/del preset exclusive
+         preset_grp = report_grp.add_mutually_exclusive_group()
+diff --git a/sos/upload/__init__.py b/sos/upload/__init__.py
+index cdbcd1a4..8885cba8 100644
+--- a/sos/upload/__init__.py
++++ b/sos/upload/__init__.py
+@@ -48,7 +48,8 @@ class SoSUpload(SoSComponent):
+         'upload_s3_secret_key': None,
+         'upload_s3_object_prefix': None,
+         'upload_target': None,
+-        'preauth': False
++        'preauth': False,
++        'upload_threads': 4
+     }
+ 
+     def __init__(self, parser=None, args=None, cmdline=None, in_place=False,
+@@ -133,6 +134,18 @@ class SoSUpload(SoSComponent):
+                                       "options are:\n"
+                                       "redhat, canonical, "
+                                       "generic, local"))
++        upload_grp.add_argument("--upload-threads", default=4, type=int,
++                                choices=range(1, 17),
++                                metavar="THREADS",
++                                help=("Number of threads for multipart "
++                                      "uploads. When an archive exceeds "
++                                      "a certain size, defined in the "
++                                      "targets, it is uploaded in "
++                                      "parallel chunks using this many "
++                                      "threads (1-16, default: 4). "
++                                      "Each thread holds a 128 MiB chunk "
++                                      "in memory, e.g. 4 threads use "
++                                      "~512 MiB"))
+ 
+     @classmethod
+     def display_help(cls, section):
+diff --git a/sos/upload/targets/__init__.py b/sos/upload/targets/__init__.py
+index 0259caa2..987a1b02 100644
+--- a/sos/upload/targets/__init__.py
++++ b/sos/upload/targets/__init__.py
+@@ -92,6 +92,7 @@ class UploadTarget():
+         'upload_s3_secret_key': None,
+         'upload_s3_object_prefix': None,
+         'upload_target': None,
++        'upload_threads': 4,
+     }
+ 
+     def __init__(self, parser=None, args=None, cmdline=None):
+diff --git a/sos/upload/targets/redhat.py b/sos/upload/targets/redhat.py
+index 4127be17..9124ae54 100644
+--- a/sos/upload/targets/redhat.py
++++ b/sos/upload/targets/redhat.py
+@@ -9,6 +9,12 @@
+ import os
+ import json
+ from pathlib import Path
++import threading
++import time
++from concurrent.futures import ThreadPoolExecutor, as_completed
++from datetime import datetime, timezone
++from urllib.parse import urlparse
++
+ from sos.upload.targets import UploadTarget
+ from sos.utilities import convert_bytes, TIMEOUT_DEFAULT
+ from sos.policies.auth import DeviceAuthorizationClass
+@@ -30,18 +36,26 @@ class RHELUploadTarget(UploadTarget):
+         "redhat-external/protocol/openid-connect/token"
+     upload_target_name = 'Red Hat Upload Target'
+     upload_target_id = "redhat"
++    RH_HYDRA_ATTACHMENTS_PATH = "/support/v3/cases/attachments"
+ 
+     def __init__(self, parser=None, args=None, cmdline=None):
+ 
+         super().__init__(parser=parser, args=args, cmdline=cmdline)
++        self._upload_session_details = {}
+ 
+     RH_API_HOST = "https://api.access.redhat.com"
+     RH_SFTP_HOST = "sftp://sftp.access.redhat.com"
+     _upload_url = RH_SFTP_HOST
+     _upload_method = 'post'
+     _device_token = None
+-    # Max size for an http single request is 1Gb
+-    _max_size_request = 1073741824
++    # Max size for an http single request is 5Gb
++    _max_size_request = 5368709120
++    _chunk_size = 128 * 1024 * 1024  # 128 MiB
++    # Uploads smaller than 5Gb can be processed
++    # with one simple HTTP PUT request. Bigger
++    # than 5Gb will need to be uploaded in chunks
++    _upload_multipart = False
++    _upload_thread_count = 4  # Default number of threads for multipart upload
+ 
+     def check_distribution(self):
+         """Return true if we are running in a RHEL system"""
+@@ -77,6 +91,20 @@ class RHELUploadTarget(UploadTarget):
+ 
+         self.upload_directory = self.commons['cmdlineopts'].upload_directory
+ 
++        upload_url = self.commons['cmdlineopts'].upload_url
++        if upload_url and not upload_url.startswith(self.RH_SFTP_HOST):
++            self.ui_log.warning(
++                _("--upload-url is set but HTTP uploads use presigned URLs "
++                  "from the Red Hat API — the custom URL affects routing "
++                  "only, not where data is sent")
++            )
++
++        if self.commons['cmdlineopts'].upload_no_ssl_verify:
++            self.ui_log.warning(
++                _("--upload-no-ssl-verify applies to simple uploads only; "
++                  "multipart chunk uploads always verify SSL")
++            )
++
+     def prompt_for_upload_user(self):
+         if self.commons['cmdlineopts'].upload_user:
+             self.ui_log.info(
+@@ -97,8 +125,7 @@ class RHELUploadTarget(UploadTarget):
+             )
+ 
+     def get_upload_url(self):
+-        rh_case_api = "/support/v1/cases/"\
+-                     f"{self.commons['cmdlineopts'].case_id}/attachments"
++        rh_case_api = self.RH_HYDRA_ATTACHMENTS_PATH
+         try:
+             if self.upload_url:
+                 return self.upload_url
+@@ -120,6 +147,511 @@ class RHELUploadTarget(UploadTarget):
+         str_auth = f"Bearer {self._device_token}"
+         return {'Authorization': str_auth}
+ 
++    def _build_abort_data(self):
++        """Build the payload for aborting an upload session."""
++        return {
++            'attachmentId': self._upload_session_details.get('attachmentId'),
++            'caseNumber': self.commons['cmdlineopts'].case_id,
++            'uploadId': self._upload_session_details.get('uploadId')
++        }
++
++    def _abort_upload(self):
++        """Cancel an ongoing upload."""
++        abort_data = self._build_abort_data()
++        base = f"{self.RH_API_HOST}{self.RH_HYDRA_ATTACHMENTS_PATH}"
++        abort_url = f"{base}/upload/abort"
++        self.ui_log.debug(
++            f"Aborting upload: attachmentId="
++            f"{abort_data.get('attachmentId')}, "
++            f"uploadId={abort_data.get('uploadId')}")
++
++        try:
++            response_abort = requests.post(
++                abort_url,
++                headers=self._get_upload_https_auth(),
++                json=abort_data,
++                timeout=TIMEOUT_DEFAULT)
++            if response_abort.status_code == 200:
++                self.ui_log.info("Upload cancelled successfully.")
++            else:
++                self.ui_log.error(
++                    "An error occurred while attempting to cancel upload: "
++                    f"{response_abort.status_code}")
++        except requests.exceptions.RequestException as e:
++            self.ui_log.error(f"Error cancelling upload: {e}")
++
++    def _complete_upload(self, complete_data):
++        """Complete an upload session
++
++        :param complete_data: Information about the upload session
++        :returns: Response object on success, None on failure
++        """
++        base = f"{self.RH_API_HOST}{self.RH_HYDRA_ATTACHMENTS_PATH}"
++        complete_url = f"{base}/upload/complete"
++        self.ui_log.debug(
++            "Completing upload: attachmentId="
++            f"{complete_data.get('attachmentId')}, "
++            f"parts={len(complete_data.get('parts', []))}")
++
++        try:
++            response_complete = requests.post(
++                complete_url,
++                headers=self._get_upload_https_auth(),
++                json=complete_data,
++                timeout=TIMEOUT_DEFAULT)
++            if response_complete.status_code == 200:
++                self.ui_log.info("Upload completed successfully.")
++                return response_complete
++            if response_complete.status_code == 400:
++                self.ui_log.error(
++                    "Upload completion rejected (400): "
++                    f"{response_complete.text}")
++            elif response_complete.status_code == 401:
++                self.ui_log.error(
++                    "Upload completion auth failed (401): "
++                    f"{response_complete.text}")
++            elif response_complete.status_code == 500:
++                self.ui_log.error(
++                    "S3 multipart completion failed (500): "
++                    f"{response_complete.text}")
++            else:
++                self.ui_log.error(
++                    "Upload completion failed "
++                    f"({response_complete.status_code}): "
++                    f"{response_complete.text}")
++            return None
++        except requests.exceptions.RequestException as e:
++            self.ui_log.error("An exception occurred while "
++                              f"completing upload: {e}")
++            return None
++
++    def _get_upload_session_details(self, archive, archive_size, total_chunks):
++        """Get the details of the upload session like attachmentId,
++        uploadStrategy, presigned URLs, and expiration time.
++        Stores the result in self._upload_session_details.
++
++        :param archive: The file object for the archive
++        :param archive_size: Size of the archive in bytes
++        :param total_chunks: Number of chunks for multipart (0 for simple)
++        """
++        # Let's reset session details before each attempt so that stale or
++        # expired presigned URLs from a previous call are not reused
++        # if this request fails and upload_archive retries.
++        self._upload_session_details = {}
++
++        data = {
++            'caseNumber': self.commons['cmdlineopts'].case_id,
++            'fileName': archive.name.split('/')[-1],
++            'fileSize': archive_size,
++            'totalChunks': total_chunks,
++            'clientId': "sos-tools"
++        }
++
++        self.ui_log.debug(
++            f"Requesting upload session: "
++            f"file={data['fileName']}, "
++            f"size={data['fileSize']}, "
++            f"chunks={data['totalChunks']}")
++        try:
++            headers = self._get_upload_https_auth()
++            base = f"{self.RH_API_HOST}{self.RH_HYDRA_ATTACHMENTS_PATH}"
++            upload_url = f"{base}/upload"
++            response = requests.post(
++                upload_url,
++                headers=headers,
++                json=data,
++                timeout=TIMEOUT_DEFAULT)
++            self.ui_log.debug("Upload session response: "
++                              f"{response.status_code}")
++            status_code = response.status_code
++            if status_code == 200:
++                self._upload_session_details = response.json()
++                details = self._upload_session_details
++                self.ui_log.debug(
++                    "Upload session initialized: "
++                    f"attachmentId="
++                    f"{details.get('attachmentId')}"
++                    f", strategy="
++                    f"{details.get('uploadStrategy')}"
++                    f", parts="
++                    f"{len(details.get('parts', []))}")
++            else:
++                self.ui_log.error(
++                    f"Failed to initialize upload session: "
++                    f"{status_code} {response.text}")
++        except requests.exceptions.RequestException as e:
++            self.ui_log.error(f"Error was found while posting a request: {e}")
++
++    # Clarification: "part" refers to the S3/API concept (partNumber,
++    # presignedUrl, parts in completion request). "Chunk" refers to
++    # the local file splitting and upload tracking. They map 1:1 but
++    # are kept distinct because the API contract may change
++    # independently from our local chunking strategy.
++    def get_file_chunks(self, archive_size, chunk_size):
++        """Given a file, generate chunks for the multipart upload
++
++        :param archive_size: The size of the archive we are dealing with
++        :param chunk_size: The chunk size we are returning
++        """
++        part_number = 1
++        offset = 0
++        while offset < archive_size:
++            size = min(chunk_size, archive_size - offset)
++            yield {
++                "part_number": part_number,
++                "size": size,
++                "offset": offset
++            }
++            offset += size
++            part_number += 1
++
++    def _upload_chunk(self, file_path, chunk_info, presigned_url,
++                      max_retries=3, cancel_event=None):
++        """Upload a single chunk
++
++        :param file_path: The path to the file to upload
++        :param chunk_info: Information about the chunk we are uploading
++        :param presigned_url: Corresponding presigned URL to use for this chunk
++        :param max_retries: Max number of retries in case of error
++        :param cancel_event: threading.Event; set to signal workers to abort
++        """
++        part_number = chunk_info["part_number"]
++        size = chunk_info["size"]
++        offset = chunk_info["offset"]
++        # Timeout: at least TIMEOUT_DEFAULT, scaled for slow links (512 KiB/s)
++        chunk_timeout = max(TIMEOUT_DEFAULT, size // (512 * 1024))
++        etag = None
++        for attempt in range(max_retries):
++            if cancel_event and cancel_event.is_set():
++                return {"partNumber": part_number, "ETag": None,
++                        "success": False}
++            try:
++                with open(file_path, 'rb') as f:
++                    f.seek(offset)
++                    chunk_data = f.read(size)
++
++                result = requests.put(presigned_url,
++                                      data=chunk_data,
++                                      headers={'Content-Type':
++                                               'application/octet-stream'},
++                                      timeout=chunk_timeout)
++                if result.status_code == 200:
++                    etag = result.headers.get("ETag", '').strip('"')
++                    if not etag:
++                        self.ui_log.warning(
++                            f"Part {part_number}: server returned 200 but "
++                            "no ETag header; treating as failure"
++                        )
++                        return {"partNumber": part_number,
++                                "ETag": None,
++                                "success": False}
++                    self.ui_log.debug(
++                        f"Part {part_number} uploaded successfully")
++                    return {"partNumber": part_number,
++                            "ETag": etag,
++                            "success": True}
++                self.ui_log.warning(f"Part number {part_number} "
++                                    "failed with status: "
++                                    f"{result.status_code}.\n"
++                                    f"Attempt {attempt+1}"
++                                    f" of {max_retries}")
++                if attempt < max_retries - 1:
++                    backoff = 2 ** attempt
++                    self.ui_log.info(
++                        f"Part {part_number}: retrying in {backoff}s")
++                    time.sleep(backoff)
++            except requests.exceptions.RequestException as e:
++                sanitized = str(e)
++                try:
++                    parsed = urlparse(presigned_url)
++                    sanitized = sanitized.replace(
++                        presigned_url,
++                        f"{parsed.scheme}://{parsed.hostname}/***")
++                except Exception as err:
++                    self.ui_log.debug(
++                        f"Could not sanitize presigned URL: {err}")
++                    sanitized = "<request error — URL redacted>"
++                self.ui_log.warning(f"Part {part_number} "
++                                    f"failed with error {sanitized} "
++                                    f"Attempt {attempt+1} of {max_retries} ")
++                if attempt < max_retries - 1:
++                    backoff = 2 ** attempt
++                    self.ui_log.info(
++                        f"Part {part_number}: retrying in {backoff}s")
++                    time.sleep(backoff)
++            # If we hit an I/O error, lets assume it's not a transient
++            # one and immediately return after informing user
++            except IOError as ioe:
++                self.ui_log.error(f"Failed to read chunk {part_number}: {ioe}")
++                return {"partNumber": part_number,
++                        "ETag": None,
++                        "success": False}
++
++        # All retries failed
++        self.ui_log.error(f"Upload of chunk {part_number} failed after "
++                          f"{max_retries} attempts")
++        return {"partNumber": part_number,
++                "ETag": etag,
++                "success": False}
++
++    def multipart_upload(self, archive):
++        """Manage the multipart upload for files exceeding _max_size_request.
++
++        :param archive: The open archive file object
++        :returns: Response object on success, None on failure
++        """
++        file_path = archive.name
++
++        thread_count = getattr(
++            self.commons.get('cmdlineopts', None),
++            'upload_threads', self._upload_thread_count)
++        self._upload_thread_count = thread_count
++
++        # Calculate number of chunks for the multipart upload
++        archive_size = os.path.getsize(file_path)
++        total_chunks = ((archive_size + self._chunk_size - 1)
++                        // self._chunk_size)
++
++        self.ui_log.debug(
++            f"Multipart upload parameters: "
++            f"archive_size={archive_size}, "
++            f"chunk_size={self._chunk_size}, "
++            f"total_chunks={total_chunks}")
++        self._get_upload_session_details(archive=archive,
++                                         archive_size=archive_size,
++                                         total_chunks=total_chunks)
++
++        if not self._upload_session_details:
++            self.ui_log.error("Failed to get upload session details.")
++            return None
++
++        # Get session metadata
++        # The format of the upload session metadata is:
++        # {
++        # "attachmentId": "abcdefghijk-lmn1opq2",
++        # "uploadStrategy": "MULTIPART",
++        # "uploadId": "s3-multipart-upload-id",
++        # "expirationTime": "2026-05-08T00:15:28.463915Z",
++        # "parts": [
++        #       { "partNumber": 1, "presignedUrl": "https://..." },
++        #       { "partNumber": 2, "presignedUrl": "https://..." }
++        #        ]
++        # }
++        attachment_id = self._upload_session_details.get('attachmentId')
++        upload_id = self._upload_session_details.get('uploadId')
++        presigned_parts = self._upload_session_details.get('parts', [])
++
++        if len(presigned_parts) != total_chunks:
++            self.ui_log.error(
++                f"Presigned URL count mismatch: expected {total_chunks}, "
++                f"got {len(presigned_parts)}")
++            self._abort_upload()
++            return None
++
++        # Map of part_number to presigned_url, with validation
++        presigned_urls = {}
++        for part in presigned_parts:
++            part_num = part.get('partNumber')
++            url = part.get('presignedUrl')
++            if not part_num or not url:
++                self.ui_log.error(
++                    f"Malformed part in API response (missing partNumber or "
++                    f"presignedUrl): {list(part.keys())}")
++                self._abort_upload()
++                return None
++            if not url.startswith('https://'):
++                self.ui_log.error(
++                    f"Presigned URL for part {part_num} does not use https; "
++                    "refusing to upload over an insecure connection")
++                self._abort_upload()
++                return None
++            presigned_urls[part_num] = url
++
++        expiration = None
++        expiration_str = self._upload_session_details.get('expirationTime')
++        if expiration_str:
++            try:
++                # Python 3.11+ handles 'Z' natively, any distribution
++                # that uses a version before this one will not work with
++                # this, so let's amend it
++                expiration = datetime.fromisoformat(
++                    expiration_str.replace('Z', '+00:00'))
++            except (ValueError, TypeError) as e:
++                self.ui_log.warning(
++                    f"Could not parse expirationTime "
++                    f"'{expiration_str}': {e}")
++
++        if expiration and datetime.now(timezone.utc) >= expiration:
++            self.ui_log.error(
++                "Upload session already expired "
++                f"(expired at {expiration_str}).")
++            self._abort_upload()
++            return None
++
++        # Get chunk info
++        chunks = list(self.get_file_chunks(
++            archive_size=archive_size,
++            chunk_size=self._chunk_size))
++
++        # Initialize lists of chunks for upload
++        uploaded_chunks = []
++        failed_chunks = []
++
++        self.ui_log.info(
++            f"Starting multipart upload: {total_chunks} chunks with "
++            f"{self._upload_thread_count} threads."
++        )
++
++        cancel_event = threading.Event()
++        executor = ThreadPoolExecutor(max_workers=self._upload_thread_count)
++        try:
++            future_to_chunk = {}
++            for chunk_info in chunks:
++                part_num = chunk_info['part_number']
++                presigned_url = presigned_urls.get(part_num)
++                if not presigned_url:
++                    self.ui_log.error(
++                        f"No presigned URL for part {part_num}")
++                    failed_chunks.append(chunk_info)
++                    continue
++
++                future = executor.submit(
++                    self._upload_chunk,
++                    file_path,
++                    chunk_info,
++                    presigned_url,
++                    cancel_event=cancel_event
++                )
++
++                future_to_chunk[future] = chunk_info
++
++            # Process completed uploads
++            completed = 0
++            for future in as_completed(future_to_chunk):
++                chunk_info = future_to_chunk[future]
++                try:
++                    result = future.result()
++                    if result and result.get("success"):
++                        uploaded_chunks.append({
++                            'partNumber': result['partNumber'],
++                            'eTag': result['ETag']
++                        })
++                        completed += 1
++                        self.ui_log.info(
++                            f"Progress: {completed}/"
++                            f"{total_chunks} chunks "
++                            "uploaded")
++                    else:
++                        failed_chunks.append(chunk_info)
++                except Exception as e:
++                    self.ui_log.error(
++                        f"Unexpected error while uploading chunk: {e}")
++                    failed_chunks.append(chunk_info)
++
++                if (expiration
++                        and completed < total_chunks
++                        and datetime.now(timezone.utc) >= expiration):
++                    self.ui_log.error(
++                        "Upload session expired during upload "
++                        f"(expired at {expiration_str}). "
++                        f"{completed}/{total_chunks} chunks "
++                        "uploaded before expiration.")
++                    self._abort_upload()
++                    return None
++        except KeyboardInterrupt:
++            cancel_event.set()
++            self.ui_log.warning("Upload interrupted by user.")
++            self._abort_upload()
++            return None
++        finally:
++            cancel_event.set()
++            try:
++                executor.shutdown(wait=False)
++            except Exception as e:
++                self.ui_log.debug(
++                    f"Error during executor shutdown: {e}")
++
++        # Check upload results
++        if failed_chunks:
++            self.ui_log.error(
++                f"Upload incomplete: {len(failed_chunks)} chunks failed."
++            )
++            for chunk in failed_chunks:
++                self.ui_log.error(
++                    f"Failed chunk {chunk['part_number']}: "
++                    f"offset {chunk['offset']}, size {chunk['size']}"
++                )
++            self._abort_upload()
++            return None
++
++        uploaded_chunks.sort(key=lambda x: x['partNumber'])
++
++        # Prepare the data about the completion
++        complete_data = {
++            'attachmentId': attachment_id,
++            'caseNumber': self.commons['cmdlineopts'].case_id,
++            'uploadId': upload_id,
++            'parts': uploaded_chunks
++        }
++
++        return self._complete_upload(complete_data)
++
++    def simple_http_upload(self, archive, verify=True):
++        """Simple request http upload. This is used for files that
++        have a size less than _max_size_request.
++
++        We don't need to call _complete_upload in this case:
++        the server auto-completes simple (non-multipart) uploads.
++        The complete/abort lifecycle only applies to multipart
++        uploads for files exceeding _max_size_request.
++
++        :param archive: The open archive file object
++        :param verify: Whether to verify SSL certificates
++        :returns: Response object on success, None on failure
++        """
++        archive_size = os.path.getsize(archive.name)
++        self.ui_log.debug(
++            f"Simple upload: file={archive.name.split('/')[-1]}, "
++            f"size={archive_size}")
++        self._get_upload_session_details(archive=archive,
++                                         archive_size=archive_size,
++                                         total_chunks=0)
++        if self._upload_session_details:
++            presigned_url = self._upload_session_details.get("presignedUrl")
++            if not presigned_url:
++                self.ui_log.error(
++                        "No presigned URL in upload session response")
++                return None
++            # Sanitize presigned URL before logging to avoid exposing
++            # temporary credentials and path identifiers in sos logs.
++            # We still log the scheme and hostname to provide enough
++            # data in debug output to diagnose upload issues.
++            parsed_url = urlparse(presigned_url)
++            self.ui_log.debug(
++                f"Uploading to URL: {parsed_url.scheme}://"
++                f"{parsed_url.hostname}/***")
++            # The API requires simple uploads for files under 5 GB,
++            # multipart is not an option. Large files near the limit may
++            # still be slow on constrained links — monitor for timeouts.
++            upload_timeout = max(
++                TIMEOUT_DEFAULT, archive_size // (512 * 1024))
++            try:
++                response = requests.put(presigned_url, data=archive,
++                                        headers={'Content-Type':
++                                                 'application/octet-stream'},
++                                        verify=verify,
++                                        timeout=upload_timeout)
++            except requests.exceptions.RequestException as e:
++                self.ui_log.error(
++                    f"Simple upload failed with error: {e}")
++                return None
++            self.ui_log.info(f"Response status: {response.status_code}")
++            return response
++        self.ui_log.error(
++            "Error while trying to start the upload session."
++        )
++        return None
++
+     def _upload_https_post(self, archive, verify=True):
+         """If upload_https() needs to use requests.post(), use this method.
+ 
+@@ -127,10 +659,6 @@ class RHELUploadTarget(UploadTarget):
+ 
+         :param archive:     The open archive file object
+         """
+-        files = {
+-            'file': (archive.name.split('/')[-1], archive,
+-                     self._get_upload_headers())
+-        }
+         # Get the access token at this point. With this,
+         # we cover the cases where report generation takes
+         # longer than the token timeout
+@@ -142,9 +670,32 @@ class RHELUploadTarget(UploadTarget):
+         self._device_token = RHELAuth.get_access_token()
+         self.ui_log.info("Device authorized correctly. Uploading file to "
+                          f"{self.get_upload_url_string()}")
+-        return requests.post(self.get_upload_url(), files=files,
+-                             headers=self._get_upload_https_auth(),
+-                             verify=verify, timeout=TIMEOUT_DEFAULT)
++
++        strategy = 'multipart' if self._upload_multipart \
++            else 'simple'
++        self.ui_log.debug(
++            f"Upload strategy: {strategy}")
++        archive_size = os.path.getsize(archive.name)
++        if self._upload_multipart:
++            thread_count = self._upload_thread_count
++            self.ui_log.info(
++                f"Upload will split the {convert_bytes(archive_size)} "
++                f"report into multiple parts and send {thread_count} "
++                f"chunk{'' if thread_count == 1 else 's'}"
++            )
++            response = self.multipart_upload(archive=archive)
++        else:
++            self.ui_log.info(
++                f"Uploading {convert_bytes(archive_size)} report in a "
++                f"single request"
++            )
++            response = self.simple_http_upload(archive=archive, verify=verify)
++        if response is None:
++            raise ConnectionError(
++                f"Failed to complete the {strategy} upload of "
++                f"{convert_bytes(archive_size)} archive {archive.name}"
++            )
++        return response
+ 
+     def _get_upload_headers(self):
+         if self.get_upload_url().startswith(self.RH_API_HOST):
+@@ -257,18 +808,19 @@ class RHELUploadTarget(UploadTarget):
+         # so we don't need to call any size converter implemented
+         # in tools.py
+         if size >= self._max_size_request:
+-            self.ui_log.warning(
++            self.ui_log.debug(
+                 _("Size of archive is bigger than Red Hat Customer Portal "
+-                  "limit for uploads of "
+-                  f"{convert_bytes(self._max_size_request)} "
+-                  " via sos http upload. \n")
++                  "limit for simple uploads of "
++                  f"{convert_bytes(self._max_size_request)}. "
++                  "Using multi-part upload.\n")
+                   )
+-            self.upload_url = self.RH_SFTP_HOST
++            self._upload_multipart = True
+ 
+     def upload_archive(self, archive):
+         """Override the base upload_archive to provide for automatic failover
+         from RHCP failures to the public RH dropbox
+         """
++        self._upload_multipart = False
+         try:
+             if self.get_upload_url().startswith(self.RH_API_HOST):
+                 self.check_file_too_big(archive)
+-- 
+2.55.0
+
