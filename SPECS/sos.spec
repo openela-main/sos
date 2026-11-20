@@ -5,7 +5,7 @@
 Summary: A set of tools to gather troubleshooting information from a system
 Name: sos
 Version: 4.11.2
-Release: 4%{?dist}
+Release: 6%{?dist}
 Group: Applications/System
 Source0: https://github.com/sosreport/sos/archive/%{version}/sos-%{version}.tar.gz
 Source1: sos-audit-%{auditversion}.tgz
@@ -30,6 +30,8 @@ Patch5: 0005-foreman-installer-Scrub-secrets-in-CLI-arg-dumps.patch
 Patch6: 0006-foremanctl-valkey-PR4376.patch
 Patch7: 0007-policies-Prefer-most-specific-policy-when-multiple-m.patch
 Patch8: 0008-processor-Limit-sys-devices-system-cpu-cpu-subdirs-c.patch
+Patch9: 0009-CVE-2026-79655.patch
+Patch10: 0010-update-upload-subsystem-for-the-new-RedHat-upload-API.patch
 
 %description
 Sos is a set of tools that gathers information about system
@@ -48,6 +50,8 @@ support technicians and developers.
 %patch -P 6 -p1
 %patch -P 7 -p1
 %patch -P 8 -p1
+%patch -P 9 -p1
+%patch -P 10 -p1
 
 %build
 %py3_build
@@ -120,6 +124,9 @@ of the system. Currently storage and filesystem commands are audited.
 %license LICENSE
 
 %changelog
+* Tue Oct 06 2026 Jan Jansky <jjansky@redhat.com> = 4.11.2-6
+- Update to 4.11.2-6
+
 * Wed Aug 05 2026 Jan Jansky <jjansky@redhat.com> = 4.11.2-4
 - Update to 4.11.2-4
 
